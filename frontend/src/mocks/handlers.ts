@@ -251,7 +251,9 @@ const listDocuments = http.get(`${BASE}/documents`, () => ok(getState().document
 
 const uploadDocuments = http.post(`${BASE}/documents`, async ({ request }) => {
   const form = await request.formData();
-  const files = form.getAll('files').filter((f): f is File => f instanceof File);
+  // 注意：jsdom 下 request.formData() 返回的 File 来自 undici，与全局 File 不是同一个构造器，
+  // 用 instanceof File 会把上传的文件全部过滤掉。这里只排除字符串字段。
+  const files = form.getAll('files').filter((f): f is File => typeof f !== 'string');
   const st = getState();
   const accepted: DocumentMeta[] = [];
   const skipped: UploadResult['skipped'] = [];
