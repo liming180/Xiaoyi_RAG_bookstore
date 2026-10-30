@@ -145,13 +145,16 @@ export function buildChunks(chunkSize = 180, overlap = 30): ChunkItem[] {
   const chunks: ChunkItem[] = [];
   SEED_DOCS.forEach((doc, docIndex) => {
     const parts = splitText(doc.text, chunkSize, overlap);
+    // 一份资料的顶层章节来自它自己的第一个一级标题；所有片段共用，
+    // 否则首片段用正文标题、后续片段回落到 doc.title，同一文档会在章节树里裂成两个节点。
+    const headingMatch = /^#\s+(.+)$/m.exec(doc.text);
+    const docHeading = `# ${headingMatch ? headingMatch[1] : doc.title}`;
     parts.forEach((part, i) => {
-      const headingMatch = /^#\s+(.+)$/m.exec(doc.text.slice(0, part.start + 1));
       chunks.push({
         chunkId: `${doc.id}-C${String(i + 1).padStart(3, '0')}`,
         docId: doc.id,
         docTitle: doc.name,
-        headingPath: headingMatch ? `# ${headingMatch[1]}` : `# ${doc.title}`,
+        headingPath: docHeading,
         text: part.text,
         start: part.start,
         end: part.end,
