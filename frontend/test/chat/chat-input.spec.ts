@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import ElementPlus from 'element-plus';
@@ -82,10 +82,33 @@ describe('输入区（F04）', () => {
     expect(wrapper.emitted('update:k')?.[0]).toEqual([5]);
   });
 
-  it('清空对话按钮上抛 clear', async () => {
+  it('清空对话按钮存在且需二次确认（不直接上抛 clear）', async () => {
+    const { ElMessageBox } = await import('element-plus');
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel');
+
+    const wrapper = mountInput();
+    const btn = wrapper.get('[data-testid="clear-chat"]');
+    expect(btn.text()).toContain('清空对话');
+
+    await btn.trigger('click');
+    await flushPromises();
+    // 用户取消 → 不上抛
+    expect(wrapper.emitted('clear')).toBeUndefined();
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+
+  it('确认后上抛 clear', async () => {
+    const { ElMessageBox } = await import('element-plus');
+    const confirmSpy = vi
+      .spyOn(ElMessageBox, 'confirm')
+      .mockResolvedValue('confirm' as never);
+
     const wrapper = mountInput();
     await wrapper.get('[data-testid="clear-chat"]').trigger('click');
+    await flushPromises();
     expect(wrapper.emitted('clear')).toHaveLength(1);
+    confirmSpy.mockRestore();
   });
 });
 

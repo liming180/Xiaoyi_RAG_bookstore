@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { Citation, Message } from '@/types/api';
+import type { Citation, FeedbackRating, Message } from '@/types/api';
 import AnswerBody from './AnswerBody.vue';
+import FeedbackBar from './FeedbackBar.vue';
 
 /**
  * MessageBubble —— 单条消息气泡（F04/F05/F11）。
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   cite: [Citation];
   retry: [];
   suggest: [string];
+  feedback: [string, FeedbackRating | null];
 }>();
 
 const isUser = computed(() => props.message.role === 'user');
@@ -43,6 +45,11 @@ const timeText = computed(() => {
 });
 
 const suggestions = computed(() => (props.message.suggestions ?? []).slice(0, 3));
+
+/** 反馈状态上抛，由页面层写回消息对象（组件内不改 prop） */
+function onFeedback(rating: FeedbackRating | null): void {
+  emit('feedback', props.message.id, rating);
+}
 </script>
 
 <template>
@@ -96,6 +103,16 @@ const suggestions = computed(() => (props.message.suggestions ?? []).slice(0, 3)
       >
         {{ s }}
       </button>
+    </div>
+
+    <!-- C1 反馈闭环：只对已落库的助手消息开放 -->
+    <div v-if="!isUser && message.id !== 'streaming'" class="bubble__foot">
+      <FeedbackBar
+        :message-id="message.id"
+        :model-value="message.feedback"
+        :disabled="Boolean(message.error)"
+        @update:model-value="onFeedback"
+      />
     </div>
   </div>
 </template>
@@ -208,5 +225,11 @@ const suggestions = computed(() => (props.message.suggestions ?? []).slice(0, 3)
 
 .bubble__chip:hover {
   border-color: var(--teal);
+}
+
+.bubble__foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 </style>

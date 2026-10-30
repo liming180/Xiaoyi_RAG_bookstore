@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { QUESTION_MAX_LENGTH } from '@/constants/app';
 import type { AnswerMode } from '@/types/api';
+import ClearChatButton from './ClearChatButton.vue';
 
 /**
  * ChatInput —— 输入区（F04）。
@@ -99,15 +100,11 @@ defineExpose({ fillAndSend, text });
         <span class="composer__k-label">段</span>
       </label>
 
-      <button
-        type="button"
+      <ClearChatButton
         class="composer__clear"
-        data-testid="clear-chat"
         :disabled="disabled || streaming"
-        @click="emit('clear')"
-      >
-        清空对话
-      </button>
+        @confirm="emit('clear')"
+      />
     </div>
 
     <div class="composer__box" :class="{ 'composer__box--busy': streaming }">
@@ -181,23 +178,6 @@ defineExpose({ fillAndSend, text });
 
 .composer__clear {
   margin-left: auto;
-  padding: 3px 10px;
-  font-size: 12px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.composer__clear:hover:not(:disabled) {
-  color: var(--red);
-  border-color: var(--red);
-}
-
-.composer__clear:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .composer__box {

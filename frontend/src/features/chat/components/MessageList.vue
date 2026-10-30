@@ -25,6 +25,7 @@ const emit = defineEmits<{
   retry: [];
   suggest: [string];
   openInKnowledge: [Citation];
+  feedback: [string, 'up' | 'down' | null];
 }>();
 
 const listEl = ref<HTMLElement | null>(null);
@@ -92,6 +93,7 @@ defineExpose({ scrollToBottom, onCite, closeCard, activeCitation });
       @cite="onCite"
       @retry="emit('retry')"
       @suggest="emit('suggest', $event)"
+      @feedback="(id, rating) => emit('feedback', id, rating)"
     />
 
     <div v-if="pendingLabel" class="msg-list__pending" data-testid="msg-pending" aria-busy="true">

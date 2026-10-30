@@ -2,7 +2,8 @@
 /**
  * 阶段门禁脚本。
  *
- * 用法：node scripts/gate.mjs P1
+ * 用法：node scripts/gate.mjs P1        # lint / typecheck / test
+ *      node scripts/gate.mjs P6 --build # 追加 vite build（P6 最终门禁）
  *
  * 依次执行 lint / typecheck / test 三道门禁，任一失败即整体失败，
  * 结果写入 test-artifacts/gate-<阶段>.json，供「必须过门禁才能进下一阶段」的流程审计。
@@ -24,6 +25,11 @@ const GATES = [
   { key: 'typecheck', label: 'vue-tsc', cmd: 'npx', args: ['vue-tsc', '--noEmit'] },
   { key: 'test', label: 'vitest', cmd: 'npx', args: ['vitest', 'run', '--reporter', 'dot'] },
 ];
+
+/** 传 --build 时追加生产构建门禁（构建产物 + 体积报告） */
+if (process.argv.includes('--build')) {
+  GATES.push({ key: 'build', label: 'vite build', cmd: 'npx', args: ['vite', 'build'] });
+}
 
 function run(cmd, args) {
   const started = Date.now();
@@ -57,6 +63,21 @@ function parseTestCounts(text) {
   };
 }
 
+/** 从 vite build 输出里抠出产物体积表（key=build 时用） */
+function parseBuildSizes(text) {
+  const rows = [];
+  const re = /^dist\/(\S+)\s+([\d.,]+)\s+kB\s+│\s+gzip:\s+([\d.,]+)\s+kB/mg;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    rows.push({
+      file: `dist/${m[1]}`,
+      rawKb: Number(m[2].replace(/,/g, '')),
+      gzipKb: Number(m[3].replace(/,/g, '')),
+    });
+  }
+  return rows;
+}
+
 const results = [];
 let allOk = true;
 
@@ -77,6 +98,7 @@ for (const gate of GATES) {
     command: `${gate.cmd} ${gate.args.join(' ')}`,
     tail,
     ...(gate.key === 'test' ? { counts: parseTestCounts(res.stdout + res.stderr) } : {}),
+    ...(gate.key === 'build' ? { sizes: parseBuildSizes(res.stdout + res.stderr) } : {}),
   });
 }
 
