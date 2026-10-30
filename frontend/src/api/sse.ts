@@ -144,10 +144,22 @@ export async function* streamChat(
   const decoder = new TextDecoder('utf-8');
   const parser = createSseParser();
 
+  /**
+   * 中断兜底：某些环境里 reader.read() 在 abort 后既不 resolve 也不 reject，
+   * 会把 for-await 挂死。这里用 Promise.race 抢一个显式的中止信号。
+   */
+  const aborted = new Promise<never>((_, reject) => {
+    if (!signal) return;
+    if (signal.aborted) reject(new AbortStreamError());
+    signal.addEventListener('abort', () => reject(new AbortStreamError()), { once: true });
+  });
+  // 没有 signal 时给一个永不 settle 的占位，避免 unhandled rejection
+  aborted.catch(() => undefined);
+
   try {
     for (;;) {
       if (signal?.aborted) throw new AbortStreamError();
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([reader.read(), aborted]);
       if (done) break;
       const text = decoder.decode(value, { stream: true });
       for (const frame of parser.push(text)) {
@@ -157,11 +169,11 @@ export async function* streamChat(
     for (const frame of parser.flush()) {
       yield toChatEvent(frame);
     }
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') throw new AbortStreamError();
+    throw err;
   } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      /* 已关闭 */
-    }
+    // 不 await：某些 polyfill 的 cancel() 在中止后永不 settle，会把调用方挂死
+    void reader.cancel().catch(() => undefined);
   }
 }
