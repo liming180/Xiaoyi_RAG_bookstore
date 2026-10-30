@@ -1,0 +1,47 @@
+# ---- 依赖 ----
+node_modules/
+.pnpm-store/
+
+# ---- 构建产物 ----
+dist/
+dist-ssr/
+build/
+*.local
+
+# ---- 测试与缓存 ----
+coverage/
+test-artifacts/
+.snapshots/
+.vitest/
+.vite/
+*.tsbuildinfo
+
+# ---- 环境与密钥 ----
+.env
+.env.local
+.env.*.local
+config.local.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ---- 日志与临时 ----
+logs/
+*.log
+.workbuddy-ai/
+
+# ---- 编辑器 / 系统 ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 运行期数据（可重新生成） ----
+exports/

@@ -1,0 +1,23 @@
+{
+  "name": "xinghe-rag-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "星河读书会个人资料助手 · Vue 3 前端（Vite 5 构建，产物由 FastAPI 托管）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "vue": "3.5.44"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.4",
+    "@vue/test-utils": "2.5.1",
+    "jsdom": "26.1.0",
+    "vite": "5.4.21",
+    "vitest": "2.1.9"
+  }
+}

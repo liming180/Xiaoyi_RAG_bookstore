@@ -1,0 +1,31 @@
+# 全仓统一 LF，避免 Windows CRLF 污染源码与文档
+* text=auto eol=lf
+
+# 明确文本类型
+*.md   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.vue  text eol=lf
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.py   text eol=lf
+*.csv  text eol=lf
+*.sh   text eol=lf
+*.cmd  text eol=crlf
+
+# 二进制
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.zip  binary

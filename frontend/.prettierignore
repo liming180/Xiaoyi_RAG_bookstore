@@ -1,0 +1,7 @@
+dist
+coverage
+node_modules
+public/mockServiceWorker.js
+package-lock.json
+test-artifacts
+.snapshots

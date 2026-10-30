@@ -1,0 +1,290 @@
+import type {
+  Citation,
+  Conversation,
+  DocumentMeta,
+  EvalCandidate,
+  EvalCaseResult,
+  EvalQuestion,
+  EvalRun,
+  Experiment,
+  ExperimentParams,
+  ExperimentRun,
+  IndexStatus,
+  IndexTask,
+  Message,
+  TraceRow,
+} from '@/types/api';
+import {
+  DIRECT_FALLBACK_ANSWER,
+  SEED_DOCS,
+  SEED_QUESTIONS,
+  SEED_SUGGESTIONS,
+  T03_ANSWER,
+  T10_ANSWER,
+  buildChunks,
+  buildDocuments,
+  seedCitations,
+  seedTrace,
+} from './data';
+import type { ChunkItem } from '@/types/api';
+
+/**
+ * MSW 内存数据库。
+ *
+ * 全部状态放在模块级单例里，handlers 只做「读写这个对象」，
+ * 这样 mock 行为与真实后端足够接近：上传后列表变、建库后状态灯变、清空后消息没了。
+ */
+
+export interface MockState {
+  conversations: Conversation[];
+  messages: Record<string, Message[]>;
+  documents: DocumentMeta[];
+  chunks: ChunkItem[];
+  indexStatus: IndexStatus;
+  tasks: Record<string, IndexTask>;
+  runs: Record<string, EvalRun>;
+  experiments: Record<string, Experiment>;
+  experimentRuns: Record<string, ExperimentRun[]>;
+  candidates: EvalCandidate[];
+  feedback: Record<string, 'up' | 'down'>;
+  seq: number;
+  /** 当前是否有实验在跑（409 互斥用） */
+  experimentRunning: boolean;
+  /** 最近一次重建请求的参数与起始时间 */
+  pendingRebuild: { chunkSize: number; overlap: number; startedAt: number } | null;
+}
+
+const now = Date.now();
+
+function initialState(): MockState {
+  const docs = buildDocuments(180, 30);
+  const chunks = buildChunks(180, 30);
+  const conv: Conversation = {
+    id: 'c-demo',
+    title: '读书会规则咨询',
+    createdAt: now - 3600_000,
+    updatedAt: now - 60_000,
+    messageCount: 0,
+  };
+
+  const welcome: Message = {
+    id: 'm-welcome',
+    conversationId: conv.id,
+    role: 'assistant',
+    content: T03_ANSWER,
+    createdAt: now - 120_000,
+    citations: seedCitations(1),
+    trace: {
+      question: '普通图书最多同时借阅几本借多久？',
+      k: 3,
+      chunkSize: 180,
+      overlap: 30,
+      rows: seedTrace('普通图书最多同时借阅几本借多久？', 3),
+    },
+    usage: { promptTokens: 820, completionTokens: 168 },
+    elapsedMs: 2340,
+    degraded: false,
+    suggestions: SEED_SUGGESTIONS,
+    feedback: null,
+  };
+  conv.messageCount = 1;
+
+  return {
+    conversations: [conv],
+    messages: { [conv.id]: [welcome] },
+    documents: docs,
+    chunks,
+    indexStatus: {
+      status: 'ready',
+      docCount: docs.length,
+      chunkCount: chunks.length,
+      chunkSize: 180,
+      overlap: 30,
+      embeddingModel: 'text-embedding-3-small (mock)',
+      lastBuiltAt: now - 86_400_000,
+      reason: null,
+    },
+    tasks: {},
+    runs: {},
+    experiments: {},
+    experimentRuns: {},
+    candidates: [
+      {
+        id: 'cand-1',
+        question: '参加读书会要交多少费用？',
+        source: 'feedback',
+        status: 'pending',
+        createdAt: now - 7200_000,
+      },
+    ],
+    feedback: {},
+    seq: 1000,
+    experimentRunning: false,
+    pendingRebuild: null,
+  };
+}
+
+let state: MockState = initialState();
+
+export function getState(): MockState {
+  return state;
+}
+
+export function resetState(): void {
+  state = initialState();
+}
+
+export function nextId(prefix: string): string {
+  state.seq += 1;
+  return `${prefix}-${state.seq}`;
+}
+
+/* --------------------------------------------------------------- 工具 */
+
+export const QUESTIONS: EvalQuestion[] = SEED_QUESTIONS;
+
+/** F09 判分：每个 | 分组至少命中一个 / 分隔的候选词 */
+export function judge(answer: string, keywords: string): boolean {
+  if (!keywords) return false;
+  return keywords
+    .split('|')
+    .every((group) => group.split('/').some((alt) => alt.trim() !== '' && answer.includes(alt.trim())));
+}
+
+/** 依据问题挑一份最像的种子回答，让 mock 有「检索到了」的实感 */
+export function pickAnswer(question: string, k: number, chunkSize = 180, overlap = 30): {
+  content: string;
+  citations: Citation[];
+  trace: TraceRow[];
+} {
+  const q = question ?? '';
+  const isFee = /费用|收费|多少钱|价格/.test(q);
+  const isPhone = /电话|号码|联系/.test(q);
+  const isBorrow = /借|本|天|续借/.test(q);
+
+  if (isFee || isPhone) {
+    const citations = seedCitations(0, chunkSize, overlap).slice(0, Math.min(k, 2));
+    return {
+      content: T10_ANSWER,
+      citations: citations.map((c, i) => ({ ...c, ref: i + 1 })),
+      trace: seedTrace(q, k, chunkSize, overlap),
+    };
+  }
+
+  if (isBorrow) {
+    const citations = seedCitations(1, chunkSize, overlap).slice(0, k);
+    return { content: T03_ANSWER, citations, trace: seedTrace(q, k, chunkSize, overlap) };
+  }
+
+  return {
+    content: `根据资料，星河读书会每周六 14:00 至 16:00 在观澜书屋二层 A 区开展读书交流，每场最多 12 人，报名截止时间为活动前一日即周五 18:00 [1]。
+
+- 参加者应提前 10 分钟到场 [1]
+- 每人分享时间控制在 3 分钟内 [1]
+- 临时不能参加时应在报名表中取消 [1]`,
+    citations: seedCitations(0, chunkSize, overlap).slice(0, k),
+    trace: seedTrace(q, k, chunkSize, overlap),
+  };
+}
+
+export function directAnswer(question: string): string {
+  return `${DIRECT_FALLBACK_ANSWER}\n\n（问题：${question}）`;
+}
+
+export function newRun(
+  questionIds: string[],
+  mode: 'rag' | 'direct' | 'both',
+  k: number,
+): EvalRun {
+  const id = nextId('run');
+  const cases: EvalCaseResult[] = questionIds.map((qid) => {
+    const q = QUESTIONS.find((x) => x.id === qid);
+    const keywords = q?.keywords ?? '';
+    const question = q?.question ?? qid;
+    const ragAnswer = pickAnswer(question, k).content;
+    const direct = directAnswer(question);
+    return {
+      questionId: qid,
+      type: q?.type ?? '',
+      question,
+      directAnswer: direct,
+      directPassed: judge(direct, keywords),
+      ragAnswer,
+      ragPassed: judge(ragAnswer, keywords),
+      ragSources: pickAnswer(question, k).citations.map((c) => c.chunkId),
+      elapsedMs: 1200 + Math.round(Math.random() * 900),
+    };
+  });
+
+  const passedDirect = cases.filter((c) => c.directPassed).length;
+  const passedRag = cases.filter((c) => c.ragPassed).length;
+
+  const run: EvalRun = {
+    id,
+    createdAt: Date.now(),
+    finishedAt: Date.now() + 1000,
+    status: 'SUCCEEDED',
+    progress: 100,
+    stats: { total: cases.length, passedDirect, passedRag },
+    mode,
+    k,
+    cases,
+  };
+  state.runs[id] = run;
+  return run;
+}
+
+export function cartesian(axes: {
+  chunkSize: number[];
+  overlap: number[];
+  k: number[];
+  rerank: boolean[];
+  summary: boolean[];
+}): ExperimentParams[] {
+  const out: ExperimentParams[] = [];
+  for (const chunkSize of axes.chunkSize) {
+    for (const overlap of axes.overlap) {
+      if (overlap >= chunkSize) continue;
+      for (const k of axes.k) {
+        for (const rerank of axes.rerank) {
+          for (const summary of axes.summary) {
+            out.push({ chunkSize, overlap, k, rerank, summary });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export function buildExperiment(name: string, axes: Parameters<typeof cartesian>[0]): Experiment {
+  const id = nextId('exp');
+  const groups = cartesian(axes);
+  const exp: Experiment = {
+    id,
+    name,
+    status: 'SUCCEEDED',
+    progress: 100,
+    totalGroups: groups.length,
+    finishedGroups: groups.length,
+    createdAt: Date.now(),
+    finishedAt: Date.now() + 5000,
+    error: null,
+  };
+  state.experiments[id] = exp;
+
+  state.experimentRuns[id] = groups.map((params, i) => ({
+    id: `${id}-g${i + 1}`,
+    params,
+    metrics: {
+      hitRate: Math.min(1, 0.62 + (params.k - 1) * 0.06 + (params.rerank ? 0.08 : 0) + (params.summary ? 0.03 : 0)),
+      avgElapsedMs: 1500 + params.chunkSize * 2 + (params.rerank ? 400 : 0),
+      avgSources: params.k,
+      failed: 0,
+    },
+    elapsedMs: 8000 + i * 500,
+  }));
+  return exp;
+}
+
+export { SEED_DOCS };
