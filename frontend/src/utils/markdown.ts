@@ -14,7 +14,12 @@
 export type Inline =
   | { type: 'text'; value: string }
   | { type: 'bold'; value: string }
-  | { type: 'link'; value: string; href: string };
+  | { type: 'link'; value: string; href: string }
+  /**
+   * 引用编号（F05）：`[1]` 走 ref，`[D02-C001]` 走 chunkId。
+   * 是否「有效」由渲染层拿 citations 判定 —— 解析器只负责切分。
+   */
+  | { type: 'cite'; raw: string; ref: number | string; chunkId: string | null };
 
 export type Block =
   | { type: 'heading'; level: number; inlines: Inline[] }
@@ -24,10 +29,14 @@ export type Block =
 
 const SAFE_HREF = /^https?:\/\/[^\s]+$/i;
 
-/** 行内解析：**粗体** 与 [文本](http...) */
+/**
+ * 行内解析：**粗体** / [文本](http...) / [1] / [D02-C001]
+ *
+ * 注意顺序：markdown 链接要求 `]` 后紧跟 `(`，因此不会和 `[1]` 抢匹配。
+ */
 export function parseInline(text: string): Inline[] {
   const out: Inline[] = [];
-  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
+  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)|\[(\d{1,2})\]|\[([Dd]\d{2}-[Cc]\d{3})\]/g;
   let last = 0;
   let m = re.exec(text);
   while (m) {
@@ -42,6 +51,11 @@ export function parseInline(text: string): Inline[] {
         // 危险协议：整段降级成字面文本
         out.push({ type: 'text', value: m[0] });
       }
+    } else if (m[4] !== undefined) {
+      out.push({ type: 'cite', raw: m[0], ref: Number(m[4]), chunkId: null });
+    } else if (m[5] !== undefined) {
+      const chunkId = m[5].toUpperCase();
+      out.push({ type: 'cite', raw: m[0], ref: chunkId, chunkId });
     }
     last = m.index + m[0].length;
     m = re.exec(text);

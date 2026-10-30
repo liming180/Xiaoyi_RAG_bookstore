@@ -110,3 +110,28 @@ export function truncate(text: string, max = 160): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length <= max ? flat : `${flat.slice(0, max)}…`;
 }
+
+/**
+ * 在 citations 里按编号或片段 ID 找引用（F05）。
+ *
+ * 找不到即「幻觉引用」：渲染层必须置灰不可点，绝不允许点开空卡片。
+ */
+export function resolveCitation(
+  citations: Citation[],
+  ref: number | string,
+  chunkId: string | null,
+): Citation | null {
+  for (const c of citations) {
+    if (String(c.ref) === String(ref)) return c;
+    if (chunkId && c.chunkId && c.chunkId.toUpperCase() === chunkId.toUpperCase()) return c;
+  }
+  return null;
+}
+
+/** 引用徽标上显示的文本：数字引用显示 [1]，片段 ID 引用显示片段号 C001 */
+export function citeLabel(ref: number | string, chunkId: string | null): string {
+  if (typeof ref === 'number') return String(ref);
+  const hit = chunkId ?? String(ref);
+  const m = /-C(\d{3})$/i.exec(hit);
+  return m ? m[1]!.replace(/^0+/, '') || '0' : hit;
+}
