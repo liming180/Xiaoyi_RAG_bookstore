@@ -14,6 +14,7 @@ import type {
 import { SEED_SUGGESTIONS, buildChunks, buildDocuments, splitText } from './data';
 import {
   QUESTIONS,
+  advanceExperiment,
   buildExperiment,
   cartesian,
   directAnswer,
@@ -447,6 +448,8 @@ const startBatch = http.post(`${BASE}/eval/batch`, async ({ request }) => {
     stats: null,
     mode: body.mode ?? 'both',
     k: body.k ?? 3,
+    // 用户勾选了哪几题就只跑哪几题；不传则跑满 T01–T10。
+    questionIds: body.questionIds?.length ? body.questionIds : QUESTIONS.map((q) => q.id),
     cases: [],
   };
   st.runs[id] = run as never;
@@ -464,8 +467,10 @@ const fetchRun = http.get(`${BASE}/eval/runs/:id`, ({ params }) => {
   if (!run) return fail(40403, '评测记录不存在', 404);
 
   if (run.cases.length === 0) {
-    // 首次读取时生成完整结果（模拟异步执行完成）
-    const qs = QUESTIONS;
+    // 首次读取时生成完整结果（模拟异步执行完成）。
+    // 只跑用户勾选的那几题 —— 与 F09「选问题集」一致，不传才是 T01–T10 全量。
+    const wanted = (run as unknown as { questionIds?: string[] }).questionIds;
+    const qs = wanted?.length ? QUESTIONS.filter((q) => wanted.includes(q.id)) : QUESTIONS;
     const cases = qs.map((q) => {
       const rag = pickAnswer(q.question, run.k).content;
       const direct = directAnswer(q.question);
@@ -524,7 +529,9 @@ const createExperiment = http.post(`${BASE}/eval/experiments`, async ({ request 
 });
 
 const fetchExperiment = http.get(`${BASE}/eval/experiments/:id`, ({ params }) => {
-  const exp = getState().experiments[String(params.id)];
+  // 每次轮询按真实流逝时间推进进度：前端 1s 拉一次就能看到 0%→100%，
+  // 跑完后 experimentRunning 自动放开，提问恢复。
+  const exp = advanceExperiment(String(params.id));
   if (!exp) return fail(40405, '实验不存在', 404);
   return ok(exp);
 });
@@ -532,7 +539,7 @@ const fetchExperiment = http.get(`${BASE}/eval/experiments/:id`, ({ params }) =>
 const fetchExperimentReport = http.get(`${BASE}/eval/experiments/:id/report`, ({ params }) => {
   const id = String(params.id);
   const st = getState();
-  const exp = st.experiments[id];
+  const exp = advanceExperiment(id);
   if (!exp) return fail(40405, '实验不存在', 404);
   return ok({ experiment: exp, runs: st.experimentRuns[id] ?? [] });
 });

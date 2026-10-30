@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import AppSidebar from './AppSidebar.vue';
 import AppTopbar from './AppTopbar.vue';
 import StatusBanner from './StatusBanner.vue';
+import ExperimentBanner from './ExperimentBanner.vue';
 import { useSystemStatusStore } from '@/stores/systemStatus';
 import { useConversationsStore } from '@/stores/conversations';
 import { useUiPrefsStore } from '@/stores/uiPrefs';
@@ -32,6 +33,7 @@ function onMediaChange(e: MediaQueryListEvent | MediaQueryList): void {
 
 const offDegraded = on('system:degraded', () => systemStatus.setDegraded(true));
 const offRestored = on('system:restored', () => systemStatus.setDegraded(false));
+const offExperiment = on('experiment:running', (running) => systemStatus.setExperimentRunning(running));
 const offAuth = on('auth:expired', () => {
   void router.push({ name: 'login' });
 });
@@ -50,6 +52,7 @@ onBeforeUnmount(() => {
   systemStatus.stopPolling();
   offDegraded();
   offRestored();
+  offExperiment();
   offAuth();
   media?.removeEventListener('change', onMediaChange);
 });
@@ -60,6 +63,7 @@ onBeforeUnmount(() => {
     <AppTopbar />
 
     <StatusBanner />
+    <ExperimentBanner />
 
     <div class="shell__body">
       <AppSidebar v-if="!narrow" />

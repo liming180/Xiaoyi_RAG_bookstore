@@ -50,6 +50,10 @@ export interface MockState {
   seq: number;
   /** 当前是否有实验在跑（409 互斥用） */
   experimentRunning: boolean;
+  /** 一次参数实验跑完需要多久（ms）。测试里调小，避免真等 4 秒 */
+  experimentDuration: number;
+  /** 每个实验的起始时间戳，用来按流逝时间算进度 */
+  experimentStartedAt: Record<string, number>;
   /** 最近一次重建请求的参数与起始时间 */
   pendingRebuild: { chunkSize: number; overlap: number; startedAt: number } | null;
 }
@@ -120,6 +124,10 @@ function initialState(): MockState {
     feedback: {},
     seq: 1000,
     experimentRunning: false,
+    // 4 秒跑完一组参数实验：既能让进度条真的动起来，又不至于把测试拖长。
+    // 测试里可直接改 getState().experimentDuration = 200 来加速。
+    experimentDuration: 4000,
+    experimentStartedAt: {},
     pendingRebuild: null,
   };
 }
@@ -257,21 +265,30 @@ export function cartesian(axes: {
   return out;
 }
 
+/**
+ * 创建一次参数实验。
+ *
+ * 与早期版本的区别：这里只把实验置为 RUNNING 并记录 `startedAt`，真正的进度推进交给
+ * `advanceExperiment()` —— 由 `GET /eval/experiments/:id` 每次被轮询时按真实流逝时间推进。
+ * 这样前端能真的看到 0%→100% 的进度条，而不是一次跳到 SUCCEEDED。
+ */
 export function buildExperiment(name: string, axes: Parameters<typeof cartesian>[0]): Experiment {
   const id = nextId('exp');
   const groups = cartesian(axes);
   const exp: Experiment = {
     id,
     name,
-    status: 'SUCCEEDED',
-    progress: 100,
+    status: 'RUNNING',
+    progress: 0,
     totalGroups: groups.length,
-    finishedGroups: groups.length,
+    finishedGroups: 0,
     createdAt: Date.now(),
-    finishedAt: Date.now() + 5000,
+    finishedAt: null,
     error: null,
   };
   state.experiments[id] = exp;
+  state.experimentStartedAt[id] = Date.now();
+  state.experimentRunning = true;
 
   state.experimentRuns[id] = groups.map((params, i) => ({
     id: `${id}-g${i + 1}`,
@@ -284,6 +301,35 @@ export function buildExperiment(name: string, axes: Parameters<typeof cartesian>
     },
     elapsedMs: 8000 + i * 500,
   }));
+  return exp;
+}
+
+/**
+ * 按流逝时间推进实验进度（幂等，可被反复调用）。
+ *
+ * 用「时间」而不是「调用次数」来推进，是为了让 1s 轮询与真实耗时对齐：测试里把
+ * `experimentDuration` 调小即可立刻跑完，页面里则按 4s 匀速走完。
+ * 到 100% 时把全局互斥开关 `experimentRunning` 放开，提问随之恢复。
+ */
+export function advanceExperiment(id: string): Experiment | null {
+  const exp = state.experiments[id];
+  if (!exp) return null;
+  if (exp.status !== 'RUNNING') return exp;
+
+  const startedAt = state.experimentStartedAt[id] ?? exp.createdAt;
+  const duration = Math.max(1, state.experimentDuration);
+  const ratio = Math.min(1, (Date.now() - startedAt) / duration);
+
+  exp.progress = Math.round(ratio * 100);
+  exp.finishedGroups = Math.min(exp.totalGroups, Math.floor(ratio * exp.totalGroups));
+
+  if (ratio >= 1) {
+    exp.status = 'SUCCEEDED';
+    exp.progress = 100;
+    exp.finishedGroups = exp.totalGroups;
+    exp.finishedAt = Date.now();
+    state.experimentRunning = false;
+  }
   return exp;
 }
 

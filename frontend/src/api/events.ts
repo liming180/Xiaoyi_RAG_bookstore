@@ -8,6 +8,12 @@ export interface ApiEvents {
   'auth:expired': void;
   'system:degraded': { code: number; message: string };
   'system:restored': void;
+  /**
+   * 参数实验互斥（套餐 E3）：实验期间后端禁止提问，返回 409。
+   * 广播出去让 AppShell 的横幅与 ChatInput 的禁用态一起响应，
+   * 而不是每个页面各写一套判断。
+   */
+  'experiment:running': boolean;
 }
 
 type Handler<T> = (payload: T) => void;

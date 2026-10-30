@@ -118,6 +118,35 @@ if (!('scrollTo' in window)) {
   Object.defineProperty(window, 'scrollTo', { writable: true, value: vi.fn() });
 }
 
+/**
+ * jsdom 没有实现 URL.createObjectURL / revokeObjectURL。
+ * CSV 导出会走 `createObjectURL` + `<a download>`，缺了这两个方法会直接抛错，
+ * 所以补成可断言的桩（测试里可以 `expect(URL.createObjectURL).toHaveBeenCalled()`）。
+ */
+if (typeof URL.createObjectURL !== 'function') {
+  Object.defineProperty(URL, 'createObjectURL', { writable: true, value: vi.fn(() => 'blob:mock') });
+}
+if (typeof URL.revokeObjectURL !== 'function') {
+  Object.defineProperty(URL, 'revokeObjectURL', { writable: true, value: vi.fn() });
+}
+
+/**
+ * jsdom 不会真的导航到 `blob:` 地址，导出用的 `<a download>` 一被 click
+ * 就会往 stderr 打一条 `Not implemented: navigation (except hash changes)`。
+ * 只拦带 `download` 属性的链接：普通链接（RouterLink 之类）照旧走 jsdom 的逻辑，
+ * 否则会连带影响其它用例里的路由跳转。
+ */
+const anchorProto = HTMLAnchorElement.prototype;
+const nativeAnchorClick = anchorProto.click;
+Object.defineProperty(anchorProto, 'click', {
+  writable: true,
+  configurable: true,
+  value(this: HTMLAnchorElement): void {
+    if (this.hasAttribute('download')) return;
+    nativeAnchorClick.call(this);
+  },
+});
+
 /* ------------------------------------------------------------ MSW 生命周期 */
 
 beforeAll(() => {

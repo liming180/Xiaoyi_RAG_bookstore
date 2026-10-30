@@ -6,6 +6,7 @@ import type { AnswerMode, Citation, Message } from '@/types/api';
 import { SEED_EXAMPLES } from '@/mocks/data';
 import { chatApi } from '@/api';
 import { useConversationsStore } from '@/stores/conversations';
+import { useSystemStatusStore } from '@/stores/systemStatus';
 import { useQueryPrefs } from '@/composables/useQueryPrefs';
 import { useConversation } from '../composables/useConversation';
 import { useChat } from '../composables/useChat';
@@ -28,6 +29,7 @@ import SuggestionChips from '../components/SuggestionChips.vue';
 const route = useRoute();
 const router = useRouter();
 const conversations = useConversationsStore();
+const systemStatus = useSystemStatusStore();
 const { mode, k, setMode, setK } = useQueryPrefs();
 
 const conversationId = computed<string | null>(() => {
@@ -98,6 +100,12 @@ function buildUserMessage(text: string): Message {
 async function send(text: string): Promise<void> {
   const cid = conversationId.value;
   if (!cid || chat.sending.value) return;
+  // 套餐 E3：实验期间后端对 POST /chat/stream 返回 409，前端提前拦下，
+  // 避免用户白发一次请求才看到错误气泡。
+  if (systemStatus.experimentRunning) {
+    ElMessage.warning('参数实验进行中，提问暂不可用，请等实验完成');
+    return;
+  }
 
   append(buildUserMessage(text));
   const ok = await chat.send(text, mode.value, k.value);
@@ -202,14 +210,14 @@ const streaming = computed<Message | null>(() => chat.streamingMessage.value);
       <SuggestionChips
         v-if="showExamples"
         :items="SEED_EXAMPLES"
-        :disabled="chat.isStreaming.value"
+        :disabled="chat.isStreaming.value || systemStatus.experimentRunning"
         @pick="send"
       />
 
       <ChatInput
         :mode="mode"
         :k="k"
-        :disabled="clearing"
+        :disabled="clearing || systemStatus.experimentRunning"
         :streaming="chat.isStreaming.value"
         @send="send"
         @stop="chat.stop()"

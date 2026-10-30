@@ -22,6 +22,13 @@ export const useSystemStatusStore = defineStore('systemStatus', () => {
   const lastError = ref<string | null>(null);
   const lastCheckedAt = ref<number | null>(null);
   const degradedBySse = ref(false);
+  /**
+   * 参数实验互斥（套餐 E3）：实验期间后端禁止提问（409）。
+   *
+   * 放在全局 store 而不是评测页局部状态，是因为要影响的地方有三处：
+   * 全站横幅、对话页输入框禁用态、评测页创建按钮 —— 三处必须同时看到同一个值。
+   */
+  const experimentRunning = ref(false);
 
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
@@ -88,6 +95,10 @@ export const useSystemStatusStore = defineStore('systemStatus', () => {
     degradedBySse.value = flag;
   }
 
+  function setExperimentRunning(flag: boolean): void {
+    experimentRunning.value = flag;
+  }
+
   /** 启动轮询；重复调用不会产生第二个定时器 */
   function startPolling(intervalMs = STATUS_POLL_INTERVAL): void {
     stopPolling();
@@ -109,6 +120,7 @@ export const useSystemStatusStore = defineStore('systemStatus', () => {
     lastError,
     lastCheckedAt,
     degradedBySse,
+    experimentRunning,
     isReady,
     needsRebuild,
     unavailable,
@@ -118,6 +130,7 @@ export const useSystemStatusStore = defineStore('systemStatus', () => {
     markNeedsRebuild,
     markReady,
     setDegraded,
+    setExperimentRunning,
     startPolling,
     stopPolling,
   };

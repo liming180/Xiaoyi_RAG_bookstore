@@ -8,6 +8,6 @@ export * as knowledgeApi from './modules/knowledge';
 export * as evalApi from './modules/eval';
 
 export { ApiError, getToken, setToken, TOKEN_KEY, http } from './http';
-export { on, emit } from './events';
+export { on, emit, clearAllListeners } from './events';
 export { createSseParser, toChatEvent, streamChat, AbortStreamError } from './sse';
 export { normalizeCitation, normalizeCitations, normalizeMessage, normalizeMessages } from './normalize';
