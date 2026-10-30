@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { DocumentMeta } from '@/types/api';
+import ListSkeleton from '@/components/ListSkeleton.vue';
 import StatusBadge from './StatusBadge.vue';
 
 /**
@@ -49,7 +50,7 @@ function onView(doc: DocumentMeta): void {
 
 <template>
   <div class="doc-table" data-testid="document-table">
-    <div v-if="loading" class="doc-table__state" data-testid="doc-loading">正在加载资料…</div>
+    <ListSkeleton v-if="loading" data-testid="doc-loading" :rows="4" label="正在加载资料…" />
 
     <div
       v-else-if="error"

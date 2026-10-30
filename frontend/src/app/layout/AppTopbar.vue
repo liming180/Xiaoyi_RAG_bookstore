@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { ChatDotRound, DataLine, TrendCharts } from '@element-plus/icons-vue';
+import { ChatDotRound, DataLine, Moon, Sunny, SwitchButton, TrendCharts } from '@element-plus/icons-vue';
 import { APP_TITLE } from '@/constants/app';
+import { authApi } from '@/api';
 import { useConversationsStore } from '@/stores/conversations';
+import { useUiPrefsStore } from '@/stores/uiPrefs';
 import StatusLight from './StatusLight.vue';
 
 /**
- * 顶栏：产品名 + 会话切换 + 状态灯 + 配置入口占位。
+ * 顶栏：产品名 + 会话切换 + 状态灯 + 主题切换 + 配置入口。
  */
 const router = useRouter();
 const conversations = useConversationsStore();
+const uiPrefs = useUiPrefsStore();
 
 const activeId = computed({
   get: () => conversations.activeId,
@@ -32,6 +35,11 @@ async function onCreate(): Promise<void> {
 
 function goSettings(): void {
   void router.push({ name: 'knowledge', query: { panel: 'settings' } });
+}
+
+function onLogout(): void {
+  authApi.logout();
+  void router.push({ name: 'login' });
 }
 </script>
 
@@ -64,6 +72,16 @@ function goSettings(): void {
 
     <div class="topbar__right">
       <StatusLight />
+      <el-tooltip :content="uiPrefs.theme === 'dark' ? '切换到浅色' : '切换到深色'" placement="bottom">
+        <el-button
+          size="small"
+          text
+          :icon="uiPrefs.theme === 'dark' ? Sunny : Moon"
+          data-testid="theme-toggle"
+          aria-label="切换主题"
+          @click="uiPrefs.toggle()"
+        />
+      </el-tooltip>
       <el-button
         size="small"
         text
@@ -83,6 +101,14 @@ function goSettings(): void {
         知识库
       </el-button>
       <el-button size="small" text data-testid="nav-settings" @click="goSettings">配置</el-button>
+      <el-button
+        size="small"
+        text
+        :icon="SwitchButton"
+        data-testid="nav-logout"
+        aria-label="退出登录"
+        @click="onLogout"
+      />
     </div>
   </header>
 </template>

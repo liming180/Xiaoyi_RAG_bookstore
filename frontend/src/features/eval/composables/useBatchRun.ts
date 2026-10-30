@@ -25,6 +25,7 @@ export function useBatchRun() {
 
   const history = ref<EvalRunSummary[]>([]);
   const historyLoading = ref(false);
+  const historyError = ref<string | null>(null);
 
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -117,10 +118,13 @@ export function useBatchRun() {
 
   async function loadHistory(): Promise<void> {
     historyLoading.value = true;
+    // 历史列表的错误单独存：它和「批量跑失败」是两件不同的事，
+    // 共用一个 error 会让批量页签顶部冒出跟当前操作无关的红字。
+    historyError.value = null;
     try {
       history.value = await evalApi.listRuns();
     } catch (e) {
-      error.value = e instanceof ApiError ? e.message : '历史加载失败';
+      historyError.value = e instanceof ApiError ? e.message : '历史加载失败';
     } finally {
       historyLoading.value = false;
     }
@@ -158,6 +162,7 @@ export function useBatchRun() {
     error,
     history,
     historyLoading,
+    historyError,
     cases,
     stats,
     finished,

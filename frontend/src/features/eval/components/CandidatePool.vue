@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { EvalCandidate, FeedbackSummary } from '@/types/api';
+import ListSkeleton from '@/components/ListSkeleton.vue';
 import { formatTime } from '../composables/batch';
 
 /**
@@ -79,7 +80,7 @@ function onRefresh(): void {
       </span>
     </div>
 
-    <div v-if="loading" class="pool__state" data-testid="pool-loading">正在加载候选…</div>
+    <ListSkeleton v-if="loading" data-testid="pool-loading" :rows="3" label="正在加载候选…" />
     <div v-else-if="error" class="pool__state pool__state--error" data-testid="pool-error">
       {{ error }}
     </div>

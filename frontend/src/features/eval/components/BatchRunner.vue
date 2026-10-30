@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus';
 import type { AnswerMode, EvalCaseResult, EvalQuestion, EvalRun, EvalStats } from '@/types/api';
 import { MODE_OPTIONS, K_MIN, K_MAX } from '@/constants/app';
 import { downloadCsv, csvTimestamp, toCsv } from '@/utils/csv';
+import ListSkeleton from '@/components/ListSkeleton.vue';
 import { batchCsvRows, excerpt, groupQuestions, passRate, ragAdvantage, summarize, typeLabel, typeTone } from '../composables/batch';
 
 /**
@@ -112,7 +113,7 @@ function exportCsv(): void {
         </div>
       </div>
 
-      <div v-if="loading" class="batch__state" data-testid="questions-loading">正在加载题目…</div>
+      <ListSkeleton v-if="loading" data-testid="questions-loading" :rows="3" label="正在加载题目…" />
       <div v-else class="batch__groups">
         <div v-for="group in groups" :key="group.type" class="batch__group">
           <span class="batch__group-label">{{ group.label }}</span>

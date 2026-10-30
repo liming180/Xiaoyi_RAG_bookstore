@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EvalRunSummary } from '@/types/api';
+import ListSkeleton from '@/components/ListSkeleton.vue';
 import { formatTime, passRate, runStatusLabel, runStatusTone } from '../composables/batch';
 
 /**
@@ -13,6 +14,8 @@ const props = defineProps<{
   runs: EvalRunSummary[];
   loading?: boolean;
   activeId?: string | null;
+  /** 加载失败时的文案；列表页三态（加载中 / 空 / 出错）必须齐，缺一个用户就只能盯着空白猜。 */
+  error?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -34,7 +37,10 @@ function onOpen(id: string): void {
       <el-button size="small" data-testid="history-refresh" @click="emit('refresh')">刷新</el-button>
     </header>
 
-    <div v-if="loading" class="history__state" data-testid="history-loading">正在加载历史…</div>
+    <ListSkeleton v-if="loading" data-testid="history-loading" :rows="3" label="正在加载历史…" />
+    <div v-else-if="error" class="history__state history__state--error" data-testid="history-error">
+      {{ error }}
+    </div>
     <div v-else-if="rows.length === 0" class="history__state" data-testid="history-empty">
       还没有评测记录。到「批量对照」标签页跑一次测试。
     </div>
@@ -117,6 +123,12 @@ function onOpen(id: string): void {
   background: var(--paper);
   border: 1px dashed var(--line);
   border-radius: var(--radius);
+}
+
+.history__state--error {
+  color: var(--red);
+  border-color: var(--red);
+  background: var(--red-soft);
 }
 
 .history__table {

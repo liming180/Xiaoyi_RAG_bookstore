@@ -218,6 +218,7 @@ onBeforeUnmount(() => {
         <RunHistory
           :runs="batch.history.value"
           :loading="batch.historyLoading.value"
+          :error="batch.historyError.value"
           :active-id="batch.run.value?.id ?? null"
           @open="onOpenRun"
           @refresh="batch.loadHistory"

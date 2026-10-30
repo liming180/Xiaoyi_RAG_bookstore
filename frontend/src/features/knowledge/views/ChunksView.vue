@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import type { ChunkItem, CitationKind } from '@/types/api';
+import ListSkeleton from '@/components/ListSkeleton.vue';
 import ChunkCard from '../components/ChunkCard.vue';
 import HeadingTree from '../components/HeadingTree.vue';
 import OverlapPanel from '../components/OverlapPanel.vue';
@@ -233,9 +234,12 @@ watch(
           @close="onCloseCompare"
         />
 
-        <div v-if="chunks.loading.value" class="chunks__state" data-testid="chunks-loading">
-          正在加载片段…
-        </div>
+        <ListSkeleton
+          v-if="chunks.loading.value"
+          data-testid="chunks-loading"
+          :rows="5"
+          label="正在加载片段…"
+        />
         <div
           v-else-if="chunks.error.value"
           class="chunks__state chunks__state--error"
