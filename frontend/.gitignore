@@ -1,8 +1,10 @@
 node_modules/
 dist/
-# 冒烟专用产物：生产构建的临时目录 + Chrome 用户数据目录
+# 冒烟与回归专用产物：各自的临时构建目录 + Chrome 用户数据目录
 dist-smoke/
+dist-regress/
 .chrome-smoke-profile/
+.chrome-regress-profile/
 coverage/
 test-artifacts/
 .snapshots/

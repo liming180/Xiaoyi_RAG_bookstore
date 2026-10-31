@@ -142,6 +142,14 @@ export function parseMarkdown(input: string): Block[] {
     }
     if (para.length > 0) {
       blocks.push({ type: 'paragraph', inlines: parseInline(para.join(' ')) });
+    } else {
+      // 兜底分支：一行以 `|` 开头但下一行还不是分隔行（流式输出表格时每 8 个字
+      // 都会重新解析一次，表头刚出来那一刻正好命中这种半截状态），
+      // 上面的四个 break 会全部命中而一行都不消费 —— 外层 while 于是原地打转，
+      // 浏览器主线程被卡死（实测把 CDP 的 Runtime.evaluate 拖到 30s 超时）。
+      // 这里强制消费一行，保证 i 单调前进。
+      blocks.push({ type: 'paragraph', inlines: parseInline((lines[i] ?? '').trim()) });
+      i += 1;
     }
   }
 

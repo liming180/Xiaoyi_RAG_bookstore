@@ -7,7 +7,20 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'test-artifacts/**', '.snapshots/**', 'public/**'],
+    ignores: [
+      // 构建产物一律不查：dist-regress / dist-smoke 是 smoke.mjs 与 regress.mjs
+      // 临时产出的真实构建目录，里面全是压缩后的第三方代码，
+      // 一旦漏进来就是几千条 no-unused-expressions（实测 3603 条）。
+      'dist/**',
+      'dist-*/**',
+      'node_modules/**',
+      'coverage/**',
+      'test-artifacts/**',
+      '.snapshots/**',
+      'public/**',
+      // Chrome 用户数据目录（smoke/regress 的 --user-data-dir），里面有扩展与缓存脚本
+      '.chrome-*/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

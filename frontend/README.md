@@ -30,6 +30,7 @@ npm run dev          # http://localhost:5173，默认走 mock，无需后端
 | `npm run test:watch` | 监听模式 |
 | `npm run gate -- P6 --build` | 四道门禁一次跑完（lint → typecheck → test → build），报告落 `test-artifacts/` |
 | `npm run smoke` | 真实 Chrome 无头渲染 + 截图，报告落 `test-artifacts/smoke.json` |
+| `npm run regress` | CDP 驱动真实操作的全量回归（10 个验收场景 + 逐条截图），报告落 `test-artifacts/regress.json` |
 | `npm run snapshot -- save <名字>` | 把 `src/` 与配置快照到 `.snapshots/`，`restore` 可回滚 |
 | `npm run gen:api` | 从 `docs/api/openapi-public.yaml` 生成类型（文件不存在时静默跳过） |
 
@@ -173,6 +174,27 @@ npm run smoke          # 需要本机装了 Chrome 或 Edge
 `test-artifacts/screenshots/`。冒烟用生产构建 + 脚本内置的 stub API，**不走 MSW** ——
 service worker 在 `--headless=new` 下等不到 controller，页面会永远停在空壳
 （这就是为什么冒烟必须用另一条链路，而不是复用开发环境的 mock）。
+
+### 全量回归（真实操作路径）
+
+冒烟只回答「构建产物能不能起来」，回归回答「验收清单里的操作路径能不能走通」——
+发问、点引用卡、改参数重建、跑批量对照、跑参数实验、清空对话，都必须真的点。
+
+```bash
+npm run regress                 # 全量 10 个场景
+npm run regress -- --only=chat  # 只跑名字含 chat 的场景
+npm run regress -- --keep       # 保留 dist-regress/ 便于排查
+```
+
+驱动方式是自己写的零依赖 CDP 客户端（`scripts/cdp.mjs`），不引 puppeteer：本项目
+锁定的 Node 21.7.1 依赖矩阵已经很紧，而 CDP 本身只是「HTTP 拿 ws 地址 + WebSocket
+发 JSON」。几个踩过的坑都写在代码注释里：`/json/new` 必须用 PUT（Chrome 111+ 对 GET
+回 405）；spawn 不能开 shell（Chrome 路径含空格会被 cmd.exe 拆词）；`el-input-number`
+的加减按钮由 `vRepeatClick` 驱动，监听的是 **mousedown** 而不是 click。
+
+10 个场景：知识库列表 / 建库进度 / T03 提问 / 引用卡 / k=1 与 k=3 检索过程对照 /
+T09 对照模式 / 批量对照测试 / 参数矩阵实验 / 片段重叠 / 清空对话。每步截图落在
+`test-artifacts/screenshots/regress-*.png`，结论写 `test-artifacts/regress.json`。
 
 ---
 

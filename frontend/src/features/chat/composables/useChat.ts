@@ -107,6 +107,17 @@ export function useChat(options: UseChatOptions) {
       }
 
       if (state.value.phase === 'done') {
+        // F08：SSE 只带 citations，检索过程（候选全集 + 前 k 界线）在落库后
+        // 按 messageId 单独拉。不补这一步的话，本次回答的 trace 永远是 null，
+        // 页面上会显示上一条消息的检索过程 —— 看起来像「k 设置没生效」。
+        if (state.value.messageId) {
+          try {
+            const trace = await chatApi.fetchTrace(state.value.messageId);
+            if (trace) state.value = { ...state.value, trace };
+          } catch {
+            // trace 是增强信息，取不到不影响回答本身
+          }
+        }
         const persisted = toMessage(state.value);
         options.onPersist?.(persisted, null);
         return true;

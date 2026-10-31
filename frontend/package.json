@@ -18,7 +18,8 @@
     "gen:api": "node scripts/gen-api-types.mjs",
     "gate": "node scripts/gate.mjs",
     "snapshot": "node scripts/snapshot.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "regress": "node scripts/regress.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "2.3.2",
