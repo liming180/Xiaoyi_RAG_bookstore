@@ -3,7 +3,8 @@
 Vue 3 + TypeScript + Vite 重写的前端。功能对照 `docs/01-功能规格/` 的 F01–F11 与
 `docs/02-重构设计/` 的套餐方案，三页 + 登录页，全站 mock 可跑。
 
-> 旧版前端在仓库根的 `web/`（Vue 2 + Element UI），本轮重构不动它，新代码全部在 `frontend/`。
+> 旧版前端 `web/`（Vue 3 + 纯 JS，无 TS、无 UI 框架）已于 2026-11-01 删除，`frontend/` 是唯一前端。
+> 已删除资产的归档在 `.snapshots/_archive/web-removed-20261101`（不进版本库）。
 
 ---
 
