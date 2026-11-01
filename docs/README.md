@@ -14,7 +14,7 @@ docs/
 ├─ 02-技术栈/      用了什么、什么版本、为什么不用别的                     ← 知道用什么做
 ├─ 02-重构设计/    ★ v2 架构规格 + 前端/后端/RAG 三份设计文档            ← 重构的唯一事实来源
 ├─ 03-后端设计/    app/ 十四个模块怎么分工、数据怎么存、接口什么形状     ← 知道后端怎么做
-├─ 04-前端设计/    web/ 十七个组件怎么分层、状态怎么流、视觉怎么定        ← 知道前端怎么做
+├─ 04-前端设计/    v1 前端（已删除的 web/）怎么分层、状态怎么流、视觉怎么定 ← 知道前端当时怎么做的
 └─ 05-端到端联调/  一轮问答/一次建库的完整时序、验收路径与截图清单       ← 知道怎么跑通、怎么交
 ```
 
@@ -107,7 +107,7 @@ docs/
 
 ```powershell
 py -3.12 -X utf8 tools\selfcheck.py     # 43 项后端自检
-cd web; npx vitest run; cd ..           # 32 项前端测试
+cd frontend; npm run test; cd ..       # 303 项前端测试（25 个 spec）
 py -3.12 -X utf8 -m app.api             # 起服务 → http://127.0.0.1:8765
 ```
 
@@ -171,11 +171,13 @@ py -3.12 -X utf8 -m app.api             # 起服务 → http://127.0.0.1:8765
 D:\VM1\Xiaoyi_RAG_bookstore\
 ├─ app\            后端 14 个模块（settings/chunking/embedding/retrieval/prompting/
 │                  llm/mockdata/judging/store/session/chat/batch/api/__init__）
-├─ web\            Vue 3 前端
-│  ├─ src\         main.js / App.vue / store.js / api.js / utils / composables / components
-│  ├─ test\        4 个 vitest spec（32 项）
+├─ frontend\       前端（Vue 3 + Vite + TypeScript，P1–P6 全部完成）
+│  ├─ src\         main.ts / App.vue / app（布局+路由）/ api / features / stores / utils / styles
+│  ├─ test\        25 个 vitest spec（303 项）
+│  ├─ scripts\     gate.mjs（四道门禁）/ smoke.mjs / regress.mjs（CDP 10 场景）/ snapshot.mjs
 │  ├─ dist\        Vite 构建产物（后端只服务这个目录）
-│  └─ legacy\      旧原生 JS 三件套（仅作对照与回滚）
+│  └─ README.md    启动方式、mock 与真实后端切换、三条硬约束
+├─ .snapshots\     阶段快照与已删 web/ 的归档（不进版本库）
 ├─ cli\            assistant.py 命令行版
 ├─ data\           6 份教学资料 .md（01–06，06 未核实）
 ├─ eval\           keywords.csv（判分关键词）
@@ -194,6 +196,6 @@ D:\VM1\Xiaoyi_RAG_bookstore\
 2. **`questions.csv` 不放 `data/`**：它是测试集，放进 `data/` 会被当成资料切块。
 3. **编码统一 UTF-8**：`.py/.md/.json/.js/.vue` 无 BOM + LF；`questions.csv` / `keywords.csv` / 导出 CSV 带 BOM（Excel 需要）。
 4. **索引原子写**：`index.json` 先写同目录临时文件再 `replace`，任何时刻读到的都是完整文件。
-5. **`/static` 挂载必须 `check_dir=False`**：否则 `web/dist` 未构建时 `import app.api` 直接崩，连带 `run.cmd` 与 `selfcheck.py` 全部不可用。
+5. **`/static` 挂载必须 `check_dir=False`**：否则 `frontend/dist` 未构建时 `import app.api` 直接崩，连带 `run.cmd` 与 `selfcheck.py` 全部不可用。静态根指向 `frontend/dist`（`app/settings.py` 的 `WEB_DIR = ROOT / "frontend"`），旧的 `web/` 已删除。
 6. **改了资料或分块参数必须重建索引**；改了 `.py` 或 `config.json` 需重启进程。
 7. **mock 档是默认档**：`provider` 不是 `"real"` 时走本地规则生成，用于课堂演示与自检；接真实接口时把 `provider` 改 `"real"` 并填 endpoint/model。
