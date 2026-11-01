@@ -1,5 +1,9 @@
 # B05 API 接口契约
 
+> ⚠️ **v1 历史归档（2026-11-01）**：本文描述的 `app/` 十四个模块已于 2026-11-01 随 v2 后端重构删除，
+> 归档源码在 `.snapshots/_archive/v1-backend-removed-20261101`。本文仅作迁移参考与答辩时的「改造前」对照，
+> **不作为现行实现依据**。现行后端见 `docs/02-重构设计/后端文档.md`（Java）与 `RAG文档.md`（Python）。
+
 > 锚点：`app/api.py`（v1 单体 24 条路由与请求/响应形状）、`frontend/src/api/modules/*.ts`（现行调用方）、`frontend/src/api/normalize.ts`（字段兼容层）
 >
 > 本文分两半：
