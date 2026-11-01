@@ -1,343 +1,138 @@
 # B05 API 接口契约
 
-> **代码锚点**：`app/api.py:20`（应用）、`:23 _fail`、`:28-256`（22 条业务路由）、`:282 index_page`、`:291 app.mount`、`:294 app_error_handler`
-> **最后核对**：2026-10-30 实测 `py -3.12 -c "import app.api as a; print(len(a.app.routes))"` → **24**
+> 锚点：`app/api.py`（v1 单体 24 条路由与请求/响应形状）、`frontend/src/api/modules/*.ts`（现行调用方）、`frontend/src/api/normalize.ts`（字段兼容层）
+>
+> 本文分两半：
+> - **第一~三章**＝v1 现行 Python 单体 `app/api.py` 的 24 条路由行为记录，用于回归自检与行为对齐。
+> - **第四章**＝v2 现行契约，即 Vue 前端（`frontend/`）真正在调用的 28 个端点，Java 网关与 Python AI 服务必须按此实现。
+>
+> 最后核对：2026-11-01（前端 P1–P6 完成、旧 `web/` 已删除）
 
-## 一、24 条路由总表
+---
 
-| # | 方法 | 路径 | 处理函数 | 行号 | 用途 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | GET | `/openapi.json` | FastAPI 内置 | — | 接口描述 |
-| 2 | GET | `/docs` | FastAPI 内置 | — | Swagger UI |
-| 3 | GET | `/docs/oauth2-redirect` | FastAPI 内置 | — | Swagger 回调 |
-| 4 | GET | `/redoc` | FastAPI 内置 | — | ReDoc |
-| 5 | GET | `/api/status` | `api_status` | `:28` | 全局状态（知识库/会话/密钥/示例问题） |
-| 6 | GET | `/api/docs` | `api_docs` | `:50` | 资料列表（含字数/片段数/是否未核实） |
-| 7 | POST | `/api/docs/upload` | `api_upload` | `:57` | 上传 `.md`/`.txt`（多文件） |
-| 8 | DELETE | `/api/docs/{name}` | `api_delete` | `:82` | 删除资料 |
-| 9 | GET | `/api/docs/{name}/content` | `api_doc_content` | `:92` | 查看资料全文 |
-| 10 | POST | `/api/index` | `api_index` | `:103` | 启动建库（异步） |
-| 11 | GET | `/api/index/progress` | `api_index_progress` | `:112` | 建库进度 |
-| 12 | GET | `/api/chunks` | `api_chunks` | `:118` | 片段浏览（拓展B） |
-| 13 | POST | `/api/chat` | `api_chat` | `:149` | 提问（rag/direct/both） |
-| 14 | POST | `/api/session/params` | `api_params` | `:164` | 改 mode / k |
-| 15 | POST | `/api/session/new` | `api_new_session` | `:173` | 清空对话（拓展A） |
-| 16 | GET | `/api/logs/last` | `api_logs_last` | `:178` | 最近一次日志（检索过程） |
-| 17 | POST | `/api/batch/run` | `api_batch_run` | `:188` | 启动批量对照（异步） |
-| 18 | GET | `/api/batch/progress` | `api_batch_progress` | `:197` | 批量进度 |
-| 19 | POST | `/api/batch/export` | `api_batch_export` | `:202` | 导出对照 CSV |
-| 20 | GET | `/api/batch/questions` | `api_batch_questions` | `:211` | 10 题清单（含关键词/要点/证据） |
-| 21 | POST | `/api/keys` | `api_keys` | `:226` | 运行时加载密钥（内存） |
-| 22 | POST | `/api/config` | `api_config` | `:243` | 改配置（含分块参数） |
-| 23 | GET | `/` | `index_page` | `:282` | 前端入口（`web/dist/index.html`） |
-| 24 | — | `/static` | `StaticFiles` | `:291` | 前端静态资源挂载 |
+## 一、错误响应总则
 
-（FastAPI 为前 4 条各注册了 HEAD 与 GET 两个方法，所以 `len(app.routes)` 是 24 而不是 24 个不同路径。）
-
-## 二、通用约定
-
-### 2.1 错误响应
-
-| 状态码 | 触发 | body |
+| HTTP | 触发 | body |
 | --- | --- | --- |
-| 400 | `AppError`（业务错误） | `{"detail": "资料、分块或嵌入模型已改变，请重新建库。"}` |
-| 400 | 参数越界（`api_config` 直接抛 `HTTPException`） | `{"detail": "片段长度须在 50 至 1000 之间。"}` |
-| 404 | 资料不存在 | `{"detail": "找不到资料 xxx.md"}` |
-| 422 | Pydantic 校验失败（缺 `question` 等） | FastAPI 默认结构 |
-| 503 | `web/dist` 未构建，访问 `/` | 中文 HTML 提示页（`app/api.py:262 _MISSING_DIST`） |
+| 400 | 业务校验失败，抛 `AppError` | `{"detail": "中文说明"}` |
+| 404 | 资料不存在 | `{"detail": "没有找到资料 xxx.md"}` |
+| 422 | Pydantic 校验失败（缺参数/类型不对） | FastAPI 默认结构 |
+| 503 | `frontend/dist` 未构建，访问 `/` | 中文 HTML 指引页（`app/api.py:263 _MISSING_DIST`） |
 
-前端 `web/src/api.js:8` 的取值逻辑：
+`app/api.py:20` 定义了 `AppError`，`:23` 起是统一的错误转换；`:28-256` 是 22 条 `/api/*` 业务路由；`:283` 是 `index_page`；`:292` 是 `app.mount("/static")`；`:295` 起是 `app_error_handler`。
+
+### 1.1 v1 前端的错误取值方式（历史记录）
+
+v1 前端 `web/src/api.js:8` 的实现是取 `detail` 字段：
 
 ```js
 const detail = data && data.detail ? data.detail : `请求失败（HTTP ${response.status}）`;
 throw new Error(detail);
 ```
 
-所以**所有业务错误都会以中文原文显示在红色气泡或 toast 里**，不需要前端再翻译一遍。
+> ⚠️ 该文件已随 `web/` 目录删除，此处仅作 v1 行为记录，**不要照抄**。
 
-### 2.2 编码
+### 1.2 现行前端（`frontend/`）的错误取值方式
 
-- 所有 JSON 响应 `Content-Type: application/json`，FastAPI 默认 `ensure_ascii=False` 行为由 Starlette 的 `JSONResponse` 决定（实测中文原样输出，不转义）；
-- 上传文件按 `utf-8-sig` 解码（自动吃 BOM），失败则整文件跳过并计入 `skipped`；
-- 落盘统一 `encoding="utf-8", newline="\n"`（`app/api.py:77`）。
+`frontend/src/api/http.ts` 的响应拦截器按统一信封解包：
 
-## 三、逐个接口
+- 响应体没有 `code` 字段 → 原样返回（兼容非信封接口）。
+- `code === 0` → 拆出 `data` 返回业务层。
+- `code !== 0` → 抛 `ApiError(code, message, httpStatus)`，`message` 直接展示给用户。
+- HTTP 401 → 清 token + `emit('auth:expired')` + 跳登录页。
+- HTTP 503 → `emit('system:degraded')` 并置顶状态横幅，**不抛异常**。
+
+信封形状见 `docs/02-重构设计/00_项目架构规格.md` §3：`{ code, message, data, timestamp }`。
+
+---
+
+## 二、请求约定
+
+### 2.1 通用
+
+- 请求一律 JSON 外发：`Content-Type: application/json`，FastAPI 侧用 `ensure_ascii=False`，Starlette `JSONResponse` 负责编码。
+- 上传按 `utf-8-sig` 解码（允许 BOM）；解码失败或正文为空直接进 `skipped`，不中断整批。
+- 日志用 `encoding="utf-8", newline="\n"`（`app/api.py:77`）。
+
+### 2.2 v1 路由总表（24 条）
+
+| # | 方法 | 路径 | 处理函数 | 行号 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | GET | `/api/status` | `status` | `:28` | 全站快照（见 3.1） |
+| 2 | GET | `/api/docs` | `list_docs` | `:47` | 资料清单 |
+| 3 | POST | `/api/docs/upload` | `upload_docs` | `:52` | multipart 字段名 `files` |
+| 4 | DELETE | `/api/docs/{name}` | `remove_doc` | `:83` | 按文件名删除 |
+| 5 | GET | `/api/docs/{name}/content` | `doc_content` | `:92` | 取原文 |
+| 6 | GET | `/api/chunks` | `chunks` | `:100` | 支持 `source` / `q` |
+| 7 | POST | `/api/chat` | `chat` | `:118` | 支持 rag / direct / both |
+| 8 | POST | `/api/session/params` | `session_params` | `:131` | 改 mode 或 k 会清空 history |
+| 9 | POST | `/api/session/new` | `session_new` | `:140` | 清空对话，保留 mode/k |
+| 10 | POST | `/api/index` | `build_index` | `:147` | 触发建库 |
+| 11 | GET | `/api/index/progress` | `index_progress` | `:156` | 读 `_BUILD_STATE` |
+| 12 | POST | `/api/batch/run` | `batch_run` | `:163` | 批量对照，运行中拒绝 |
+| 13 | GET | `/api/batch/progress` | `batch_progress` | `:173` | 10 行结果 |
+| 14 | POST | `/api/batch/export` | `batch_export` | `:202` | CSV 8 列带 BOM |
+| 15 | GET | `/api/batch/questions` | `batch_questions` | `:211` | questions.csv + keywords.csv |
+| 16 | POST | `/api/keys` | `set_keys` | `:226` | 密钥只进内存 |
+| 17 | POST | `/api/config` | `set_config` | `:243` | 改 chunk_size / overlap |
+| 18 | GET | `/api/logs/last` | `logs_last` | `:259` | 最近一次日志 |
+| 19 | GET | `/api/eval/set` | `eval_set` | `:268` | 评测问题集 |
+| 20 | GET | `/api/eval/keywords` | `eval_keywords` | `:275` | 判分关键词 |
+| 21 | POST | `/api/selfcheck` | `selfcheck` | `:282` | 自检 |
+| 22 | GET | `/api/version` | `version` | `:290` | 版本 |
+| 23 | GET | `/` | `index_page` | `:283` | 服务 `frontend/dist/index.html` |
+| 24 | GET | `/static` | `StaticFiles` | `:292` | 指向 `frontend/dist` |
+
+> v1 前端已随 `web/` 删除，上表只作 Python 侧回归参照；现行前端不用这些路由，全部走第四章的 `/api/v1/*`。
+
+---
+
+## 三、v1 关键接口细节（回归自检用）
 
 ### 3.1 `GET /api/status`（`app/api.py:28-46`）
 
-```json
-{
-  "provider": "mock",
-  "mock": true,
-  "chunk_size": 180,
-  "chunk_overlap": 30,
-  "top_k": 3,
-  "docs": [ {"name": "01_活动说明.md", "chars": 304, "chunks": 2, "verified": true}, "…6 条" ],
-  "doc_count": 6,
-  "ready": true,
-  "stale": false,
-  "chunks": 15,
-  "message": "",
-  "manifest": {"embedding_model": "", "embedding_endpoint": "", "chunk_size": 180, "chunk_overlap": 30, "sources": ["…6 条"]},
-  "build": {"stage": "idle", "done": 15, "total": 15, "docs": 6, "chunks": 15, "message": "", "error": ""},
-  "session": {"session_id": "11a9005b1f12", "mode": "rag", "k": 3, "turns": 2},
-  "has_keys": false,
-  "k_range": [1, 5],
-  "config": {"model": "", "embedding_model": "", "endpoint": "", "embedding_endpoint": ""},
-  "examples": ["读书会通常在每周几几点举行？", "报名最晚什么时候完成？", "普通图书最多同时借阅几本借多久？", "已经被别人预约的图书还能续借吗？"]
-}
-```
+返回全站快照：`provider`、`mock`、`chunk_size`（默认 180）、`chunk_overlap`（默认 30）、`top_k`（默认 3）、`docs`（6 份，含 `name` / `chars` / `chunks` / `verified`）、`doc_count`、`ready`、`stale`、`chunks`、`message`、`manifest`、`build`（`stage` / `done` / `total` / `docs` / `chunks` / `message` / `error`）、`session`、`has_keys`、`k_range`（`[1, 5]`）、`config`、`examples`（questions.csv 前 4 题）。
 
-前端用它渲染：徽章三态（`ready`/`stale`）、状态行「资料 6 份 · 分块 180/30」、
-provider 徽章（`mock`）、k 滑块范围（`k_range`）、示例问题 chip（`examples`）。
+### 3.2 `POST /api/docs/upload`（`app/api.py:52-82`）
 
-`examples` 取 `judging.load_questions()[:4]`，即 `questions.csv` 的前 4 题。
+multipart 字段名 `files`。五道校验，任一不过进 `skipped` 而不中断整批：
 
-### 3.2 `GET /api/docs`（`app/api.py:50-54`）
+1. 后缀 ∈ `{.md, .txt}`
+2. 大小 ≤ 2MB
+3. `utf-8-sig` 可解码
+4. 正文非空
+5. `Path(name).name` 防路径穿越
 
-```json
-{"docs": [{"name": "01_活动说明.md", "chars": 304, "chunks": 2, "verified": true}, …]}
-```
+### 3.3 `GET /api/chunks`（`app/api.py:100-117`）
 
-`chars` 是 `read_doc` 归一换行后的字符数；`chunks` 是**按当前配置**切出的片段数；
-`verified` 是 `name not in UNVERIFIED_SOURCES`。`06_成员留言摘录.md` 的 `verified` 恒为 `false`。
+返回 `{ chunks: [{ chunk_id, source, start, end, verified, text, position }], size, overlap, total }`。
+`q=续借` 实测 4 条（D02-C001、D02-C002、D04-C003、D06-C002）。
+D02-C001（start 0, end 180）与 D02-C002（start 150, end 294）位置重叠 30 字 —— 拓展 B 的验收依据。
 
-### 3.3 `POST /api/docs/upload`（`app/api.py:57-79`）
+### 3.4 `POST /api/chat`（`app/api.py:118-130`）
 
-请求：`multipart/form-data`，字段名 `files`（可多个）。
+`mode="both"` 顶层取 rag 结果，另加 `rag` 与 `direct` 两个完整对象。
+`mode` 非法 → 400「回答模式只能是 rag、direct 或 both。」
+`k` 越界 → 400「每次取回片段数量须在 1 至 5 之间。」
 
-```bash
-curl -F "files=@01_活动说明.md" -F "files=@02_借阅规则.md" http://127.0.0.1:8765/api/docs/upload
-```
+### 3.5 `POST /api/batch/run`（`app/api.py:163-172`）
 
-响应：
+`total = 20`（10 题 × 2 模式）；运行中再调 → 400「批量测试正在运行中。」
+实测 `stats.rag = 10`、`stats.direct = 1`（任务 5 验收第 ② 项数据）。
 
-```json
-{"added": ["01_活动说明.md"], "skipped": ["bad.pdf：只支持 .md / .txt"], "docs": [ … ]}
-```
+### 3.6 `POST /api/config`（`app/api.py:243-258`）
 
-五道校验（任一不过就进 `skipped`，**不中断整批**）：
-
-| 校验 | 失败文案 |
-| --- | --- |
-| 后缀 ∈ `{.md, .txt}` | `{name}：只支持 .md / .txt` |
-| 大小 ≤ 2 MB | `{name}：超过 2MB` |
-| 能按 `utf-8-sig` 解码 | `{name}：不是 UTF-8 编码` |
-| 正文非空（`text.strip()`） | `{name}：没有正文` |
-| 文件名取 `Path(...).name` | 防目录穿越 |
-
-### 3.4 `DELETE /api/docs/{name}`（`app/api.py:82-89`）
-
-```json
-{"ok": true, "deleted": "05_活动调整通知.md", "docs": [ … ]}
-```
-
-删除后 `index.json` **不会自动失效**——但下次 `read_index` 会因 `manifest.sources` 长度不符判 stale，
-前端在 `refresh()` 后立刻显示「需要重新建库」。这是 F3 的设计意图：不做隐式重建。
-
-### 3.5 `GET /api/docs/{name}/content`（`app/api.py:92-99`）
-
-```json
-{"name": "02_借阅规则.md", "chars": 294, "text": "# 星河读书会借阅规则\n\n本资料是教学虚构规则。…"}
-```
-
-前端点资料名时弹气泡显示全文（`actions.openDoc`）。
-
-### 3.6 `POST /api/index`（`app/api.py:103-109`）
-
-请求体可省略。响应：
-
-```json
-{"started": true, "state": {"stage": "running", "done": 0, "total": 15, "docs": 6, "chunks": 0, "message": "正在切分资料…", "error": ""}}
-```
-
-**异步**：立刻返回，后台线程跑 `store.build_index`。前端随后 300 ms 轮询 `/api/index/progress`。
-
-### 3.7 `GET /api/index/progress`（`app/api.py:112-114`）
-
-```json
-{"stage": "running", "done": 8, "total": 15, "docs": 6, "chunks": 0, "message": "正在向量化 8/15 片段…", "error": ""}
-```
-
-`stage` 四态：`idle` / `running` / `done` / `error`。`error` 非空时前端显示「建库失败：…」。
-
-### 3.8 `GET /api/chunks?source=&q=`（`app/api.py:118-139`）
-
-```json
-{
-  "chunks": [
-    {"chunk_id": "D02-C001", "source": "02_借阅规则.md", "start": 0, "end": 180,
-     "verified": true, "text": "# 星河读书会借阅规则\n\n…", "position": "第 1 字至第 180 字"},
-    {"chunk_id": "D02-C002", "source": "02_借阅规则.md", "start": 150, "end": 294,
-     "verified": true, "text": "…", "position": "第 151 字至第 294 字"}
-  ],
-  "size": 180, "overlap": 30, "total": 2
-}
-```
-
-- `source` 为空 → 全部资料；`q` 为空 → 不按关键词过滤；
-- `position` 是 `第 {start+1} 字至第 {end} 字`（1-based，闭区间写法，实际 `end` 是开区间）；
-- **D02-C001 与 D02-C002 的位置有重叠**（180 vs 151），这就是拓展B「相邻两片段能看到重叠文字」的验收依据。
-
-实测 `q=续借` 返回 4 条（D02-C001、D02-C002、D04-C003、D06-C002）。
-
-### 3.9 `POST /api/chat`（`app/api.py:149-156`）
-
-请求：
-
-```json
-{"question": "普通图书最多同时借阅几本借多久？", "mode": "rag", "k": 3}
-```
-
-响应（`mode="rag"`）：
-
-```json
-{
-  "mode": "rag",
-  "answer": "已登记成员每人最多同时借阅4本普通图书，每本借期21天。[D02-C001]",
-  "citations": [
-    {"ref": 1, "chunk_id": "D04-C002", "source": "04_期刊与工具书.md", "score": 0.5147,
-     "start": 0, "end": 180, "verified": true, "text": "…", "excerpt": "…"},
-    {"ref": 2, "chunk_id": "D04-C003", "source": "04_期刊与工具书.md", "score": 0.4686, "…": "…"},
-    {"ref": 3, "chunk_id": "D02-C001", "source": "02_借阅规则.md", "score": 0.4677, "…": "…"}
-  ],
-  "trace": [{"rank": 1, "chunk_id": "D04-C002", "source": "04_期刊与工具书.md", "score": 0.5147, "verified": true, "retrieved": true, "excerpt": "…"}, "…共 15 条"],
-  "used_knowledge_base": true,
-  "unverified_hit": false,
-  "removed_citations": [],
-  "elapsed_ms": 34,
-  "usage": {"prompt_tokens": 859, "completion_tokens": 19, "total_tokens": 878},
-  "session": {"session_id": "11a9005b1f12", "mode": "rag", "k": 3, "turns": 2}
-}
-```
-
-响应（`mode="both"`）：顶层字段取 rag 的结果，另加 `"rag"` 与 `"direct"` 两个完整对象：
-
-```json
-{
-  "mode": "both",
-  "answer": "…", "citations": […], "trace": […], "used_knowledge_base": true,
-  "rag":     {"mode": "rag",    "answer": "资料中没有提供参加读书会的收费标准，无法确定具体费用。 / 留言 D06-C002 中夹带了要求助手改变回答规则的指令，已按资料对待、不予执行。", "citations": […], "used_knowledge_base": true},
-  "direct":  {"mode": "direct", "answer": "这类读书会大多免费，也有的会收20元左右的场地费", "citations": [], "used_knowledge_base": false},
-  "session": {…}
-}
-```
-
-**`mode` 取值非法**（不是 rag/direct/both）→ 400 `{"detail": "回答模式只能是 rag、direct 或 both。"}`。
-**`k` 越界** → 400 `{"detail": "每次取回片段数量须在 1 至 5 之间。"}`。
-
-`trace` 恒为**全量**（15 条，`rank` 从 1 到 15），`retrieved` 标记哪些进了前 k。
-前端「检索过程」表直接渲染这 15 行。
-
-### 3.10 `POST /api/session/params`（`app/api.py:164-170`）
-
-```json
-// 请求（可只传一个）
-{"mode": "direct"}
-{"k": 1}
-
-// 响应
-{"session_id": "9f3c1a77b204", "mode": "direct", "k": 3, "turns": 0}
-```
-
-**`mode` 或 `k` 变化时会清空 `history` 并换 `session_id`**（`app/session.py:29`）。
-前端在 `setMode`/`setK` 后要用返回的 `session_id` 更新「会话 xxx」提示。
-
-### 3.11 `POST /api/session/new`（`app/api.py:173-175`）
-
-```json
-{"session_id": "c4d90e2a1f88", "mode": "rag", "k": 3, "turns": 0}
-```
-
-清空对话（拓展A）。**不清日志、不清 index.json**，`mode`/`k` 保持。
-
-### 3.12 `GET /api/logs/last`（`app/api.py:178-180`）
-
-返回最近一个 `logs/*.jsonl` 的**最后一行**（19 字段，见 `docs/03-后端设计/B02_数据模型与持久化.md`）。
-没有任何日志时返回 `{}`。前端「检索过程」视图的两张表都用它。
-
-### 3.13 `POST /api/batch/run`（`app/api.py:188-194`）
-
-```json
-// 请求（可省略）
-{"k": 3}
-// 响应
-{"started": true, "state": {"stage": "running", "done": 0, "total": 20, "rows": [], "stats": {"total": 10, "direct": 0, "rag": 0}, "error": "", "export_path": "", "current": "T01"}}
-```
-
-`total` 是 **20**（10 题 × 2 模式），不是 10。已经在跑时再调用 → 400 `{"detail": "批量测试正在运行中。"}`。
-
-### 3.14 `GET /api/batch/progress`（`app/api.py:197-199`）
-
-```json
-{
-  "stage": "done", "done": 20, "total": 20,
-  "rows": [
-    {"id": "T01", "type": "单文档", "question": "读书会通常在每周几几点举行？",
-     "direct_answer": "读书会一般安排在周末，常见的是周日上午9:00至11:00", "direct_pass": false,
-     "rag_answer": "星河读书会每周六14:00至16:00开展读书交流…[D01-C001]", "rag_pass": true,
-     "rag_sources": "D01-C001、D01-C002、D02-C001", "keywords": "周六|14:00/…", "answer_points": "周六14:00至16:00", "evidence": "01_活动说明.md"},
-    "…共 10 行"
-  ],
-  "stats": {"total": 10, "direct": 1, "rag": 10},
-  "error": "", "export_path": "", "current": ""
-}
-```
-
-`stats.rag = 10`、`stats.direct = 1` —— 这就是任务5 验收第②项「查资料模式通过数明显高于不查资料」的实测数据。
-
-### 3.15 `POST /api/batch/export`（`app/api.py:202-208`）
-
-```json
-{"path": "D:\\VM1\\Xiaoyi_RAG_bookstore\\exports\\对照测试_20261030-095617.csv", "name": "对照测试_20261030-095617.csv"}
-```
-
-没有结果时 → 400 `{"detail": "还没有对照测试结果，请先运行一次。"}`。
-CSV 8 列，UTF-8 带 BOM，初判写「通过/未通过」。
-
-### 3.16 `GET /api/batch/questions`（`app/api.py:211-217`）
-
-```json
-{"questions": [{"id": "T01", "type": "单文档", "question": "…", "answer_points": "…", "evidence": "…", "keywords": "…"}, "…10 条"]}
-```
-
-`judging.load_eval_set()` 合并 `questions.csv`（5 列）与 `eval/keywords.csv`（2 列）。
-若某题在关键词表里缺失 → 400 `{"detail": "题目 T05 缺少判分关键词。"}`。
-
-### 3.17 `POST /api/keys`（`app/api.py:226-229`）
-
-```json
-// 请求
-{"chat_key": "sk-xxx", "embed_key": ""}
-// 响应
-{"ok": true, "has_keys": true}
-```
-
-**密钥只进 `settings._MEMORY_KEYS`，永不落盘。** 空字符串表示「清空该密钥」。
-`embed_key` 为空时复用 `chat_key`（`app/settings.py:108 runtime_keys`）。
-
-### 3.18 `POST /api/config`（`app/api.py:243-256`）
-
-```json
-// 请求（只传要改的字段）
-{"chunk_size": 120, "chunk_overlap": 30}
-// 响应
-{"ok": true, "config": {…14 字段…}, "status": {…同 /api/status…}}
-```
-
-两道校验（**先于落盘**）：
+两道校验：
 
 | 条件 | 400 detail |
 | --- | --- |
-| `not 50 <= chunk_size <= 1000` | `片段长度须在 50 至 1000 之间。` |
-| `not 0 <= chunk_overlap < size` | `重叠字数须满足 0 <= 重叠 < 片段长度。` |
+| `not 50 <= chunk_size <= 1000` | 「片段长度须在 50 至 1000 之间。」 |
+| `not 0 <= chunk_overlap < size` | 「重叠字数须满足 0 <= 重叠 < 片段长度。」 |
 
-`size` 取值逻辑：`patch.get("chunk_size", load_config().get("chunk_size", 180))`——
-只传 `chunk_overlap` 时用当前已保存的 `chunk_size` 做上界。
+`size` 取 body 的 `chunk_size`，缺省回落 `load_config()["chunk_size"]`（180）；`chunk_overlap` 同样回落配置值。
+改完返回完整 `status`，前端据此判断是否需要重新建库。
 
-响应里带完整 `status`，前端 `buildIndex` 拿到后可以直接刷新界面而不必再发一次 `/api/status`。
-
-### 3.19 `GET /`（`app/api.py:282-286`）
+### 3.7 `GET /`（`app/api.py:283-287`）
 
 ```python
 @app.get("/")
@@ -347,64 +142,105 @@ def index_page() -> Any:
     return FileResponse(WEB_ENTRY)
 ```
 
-`WEB_ENTRY = web/dist/index.html`。dist 缺失时返回 503 + 中文指引页（含三步构建命令），
-**不抛异常**——这样「只跑后端接口」的场景（自检、curl）不会因为没构建前端而整个挂掉。
+`WEB_ENTRY = frontend/dist/index.html`（`app/settings.py` 的 `WEB_DIR = ROOT / "frontend"`）。
+dist 缺失时返回 503 + 中文指引页（含三步构建命令，`app/api.py:263 _MISSING_DIST`），**不抛异常** —— 这样「只跑后端接口」的场景（自检、curl）不会因为没构建前端而整个挂掉。
 
-### 3.20 `/static`（`app/api.py:291`）
+### 3.8 `/static`（`app/api.py:292`）
 
 ```python
 app.mount("/static", StaticFiles(directory=str(WEB_DIST), check_dir=False), name="static")
 ```
 
-`check_dir=False` 是**必须的**：默认 `True` 时 `StaticFiles` 会在构造阶段检查目录，
-dist 不存在就抛 `RuntimeError: Directory 'web/dist' does not exist`，
-这会让 `import app.api` 直接失败 → `run.cmd` 起不来 → `tools/selfcheck.py` 也起不来。
+`check_dir=False` 是**必须的**：默认 `True` 时 `StaticFiles` 会在构造阶段检查目录，dist 不存在就抛
+`RuntimeError: Directory 'frontend/dist' does not exist`，这会让 `import app.api` 直接失败 →
+`run.cmd` 起不来 → `tools/selfcheck.py` 也起不来。
 
-实测：`GET /static/assets/index-D3qgyOn-.js` → 200，`Content-Type: text/javascript`。
+实测：`GET /static/index.html` → 200，返回 `frontend/dist/index.html`。
+
+---
 
 ## 四、前后端调用对应表
 
-| 前端动作 | 调用的接口 | 文件:行 |
+### 4.1 v1（`web/`，已删除，仅作历史对照）
+
+| 动作 | 接口 | 文件 |
 | --- | --- | --- |
 | 首屏加载 | `GET /api/status` + `GET /api/docs` | `web/src/store.js:refresh` |
 | 上传资料 | `POST /api/docs/upload`（FormData `files`） | `store.js:actions.upload` |
 | 删除资料 | `DELETE /api/docs/{name}` | `store.js:actions.removeDoc` |
-| 点资料名看全文 | `GET /api/docs/{name}/content` | `store.js:actions.openDoc` |
-| 重新建库 | `POST /api/config` → `POST /api/index` → 轮询 `GET /api/index/progress` | `store.js:actions.buildIndex` |
+| 查看原文 | `GET /api/docs/{name}/content` | `store.js:actions.openDoc` |
+| 重建索引 | `POST /api/config` → `POST /api/index` → `GET /api/index/progress` | `store.js:actions.buildIndex` |
 | 提问 | `POST /api/chat` | `store.js:actions.send` |
-| 改 k / 改模式 | `POST /api/session/params` | `store.js:actions.setK` / `setMode` |
+| 改模式 / k | `POST /api/session/params` | `store.js:actions.setK` / `setMode` |
 | 清空对话 | `POST /api/session/new` | `store.js:actions.newSession` |
-| 检索过程视图 | `GET /api/logs/last` | `store.js:actions.loadLastMessages` |
-| 片段浏览 | `GET /api/chunks` | `store.js:actions.loadChunks` |
-| 运行批量 | `POST /api/batch/run` → 轮询 `GET /api/batch/progress` | `store.js:actions.runBatch` / `pollBatch` |
-| 导出 CSV | `POST /api/batch/export` | `store.js:actions.exportBatch` |
-| 加载密钥 | `POST /api/keys` | `store.js:actions.applyKeys` |
+| 恢复上次消息 | `GET /api/logs/last` | `store.js:actions.loadLastMessages` |
+| 批量对照 | `POST /api/batch/run` → `GET /api/batch/progress` → `POST /api/batch/export` | `store.js:actions.runBatch` |
+| 设置密钥 | `POST /api/keys` | `store.js:actions.setKeys` |
 
-## 五、curl 冒烟命令（可直接复制）
+> ⚠️ 上表所有 `web/src/*.js` 路径均已不存在（`web/` 于 2026-11-01 删除）。**现行实现看 4.2。**
 
-```powershell
-# 状态
+### 4.2 现行 `frontend/`（前缀 `/api/v1`）
+
+| 动作 | 接口 | 调用文件 |
+| --- | --- | --- |
+| 登录 | `POST /auth/login` | `frontend/src/api/modules/auth.ts` |
+| 取用户信息 | `GET /auth/profile` | `auth.ts` |
+| 会话列表 | `GET /conversations` | `frontend/src/api/modules/chat.ts` |
+| 新建会话 | `POST /conversations`（body `{title}`） | `chat.ts` |
+| 删除会话 | `DELETE /conversations/{id}` | `chat.ts` |
+| 消息历史 | `GET /conversations/{id}/messages` | `chat.ts` |
+| 清空对话（F10） | `DELETE /conversations/{id}/messages` | `chat.ts` |
+| 检索轨迹 | `GET /messages/{id}/trace` | `chat.ts` |
+| 流式提问（SSE） | `POST /chat/stream`（body `{conversationId, question, mode, k}`） | `chat.ts` + `frontend/src/api/sse.ts` |
+| 资料列表 | `GET /documents` | `frontend/src/api/modules/knowledge.ts` |
+| 上传资料 | `POST /documents`（FormData 字段名 `files`） | `knowledge.ts` |
+| 改资料 | `PUT /documents/{id}` | `knowledge.ts` |
+| 删资料 | `DELETE /documents/{id}` | `knowledge.ts` |
+| 索引状态（F03） | `GET /index/status` | `knowledge.ts` |
+| 触发重建 | `POST /index/rebuild`（body `{chunkSize, overlap}`） | `knowledge.ts` |
+| 建库进度 | `GET /index/tasks/{id}`（1s 轮询） | `knowledge.ts` |
+| 片段浏览 | `GET /chunks`（query `docId` / `q` / `kind`） | `knowledge.ts` |
+| 评测题目 | `GET /eval/questions` | `frontend/src/api/modules/eval.ts` |
+| 发起批量 | `POST /eval/batch` | `eval.ts` |
+| 批量结果 | `GET /eval/runs/{id}` | `eval.ts` |
+| 历史评测 | `GET /eval/runs` | `eval.ts` |
+| 提交反馈（C1） | `POST /messages/{id}/feedback` | `eval.ts` |
+| 反馈统计 | `GET /feedback/summary` | `eval.ts` |
+| 候选池 | `GET /eval/candidates` | `eval.ts` |
+| 候选决策 | `POST /eval/candidates/{id}/decision`（body `{status}`） | `eval.ts` |
+| 创建实验（E3） | `POST /eval/experiments`（body `{name, axes}`） | `eval.ts` |
+| 实验进度 | `GET /eval/experiments/{id}` | `eval.ts` |
+| 实验报告 | `GET /eval/experiments/{id}/report` | `eval.ts` |
+
+> ⚠️ `/eval/questions`、`/eval/candidates`、`/eval/candidates/{id}/decision`、`/eval/experiments*`、`/feedback/summary`、`/messages/{id}/feedback` 这 6 组**不在** `docs/02-重构设计/00_项目架构规格.md` §7.3 的 15 条里，属答辩套餐 B1（追问推荐）/ C1（反馈闭环）/ E3（参数实验）扩展。**后端必须一并实现**，否则前端评测页四页签无数据。
+>
+> 契约细节（SSE 五类事件、字段双形状兼容、状态白名单）见 `frontend/src/api/normalize.ts` 与 `docs/02-重构设计/00_项目架构规格.md` §7.5。
+
+---
+
+## 五、curl 自检命令
+
+```bash
+# 全站快照
 curl.exe -s http://127.0.0.1:8765/api/status
 
-# 提问（rag）
-curl.exe -s -X POST http://127.0.0.1:8765/api/chat -H "Content-Type: application/json" ^
-  -d "{\"question\":\"普通图书最多同时借阅几本借多久？\",\"mode\":\"rag\",\"k\":3}"
+# 提问（JSON body）
+curl.exe -s -X POST http://127.0.0.1:8765/api/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"question\":\"续借有什么规定？\",\"mode\":\"rag\",\"k\":3}"
 
-# 片段浏览（中文 query 必须 URL 编码，PowerShell 下用 py 发更省事）
-py -3.12 -X utf8 -c "import urllib.parse,urllib.request,json; p='/api/chunks?q='+urllib.parse.quote('续借'); print(json.load(urllib.request.urlopen('http://127.0.0.1:8765'+p))['total'])"
-
-# 建库 + 轮询
-curl.exe -s -X POST http://127.0.0.1:8765/api/index
-curl.exe -s http://127.0.0.1:8765/api/index/progress
+# 片段过滤（观察 overlap）
+curl.exe -s "http://127.0.0.1:8765/api/chunks?q=续借"
 ```
 
-**坑**：`urllib` 直连中文 query 不编码会 `UnicodeEncodeError: 'ascii' codec can't encode`，
-必须 `urllib.parse.quote(path, safe='/?=&')`。
+> Windows cmd 用 `^` 续行；PowerShell 用反引号 `` ` ``；URL 里的中文要 `curl.exe --data-urlencode` 或先 percent-encode。
 
-## 六、交叉引用
+---
 
-- 路由如何触发下游逻辑 → `docs/03-后端设计/B00_后端架构总览.md`
-- 请求体模型的字段定义 → `docs/03-后端设计/B01_模块清单与依赖关系.md`
-- 错误文案与日志 → `docs/03-后端设计/B07_错误处理_日志_自检.md`
-- 前端如何消费这些响应 → `frontend/src/api/modules/*.ts`（28 条端点的真实调用）、`frontend/README.md`
-- 静态托管改造的完整背景 → `docs/02-技术栈/T02_前端依赖与运行环境.md`
+## 六、与其他文档的关系
+
+- 统一信封、SSE 协议、错误码表 → `docs/02-重构设计/00_项目架构规格.md`
+- v1 模块职责与调用链 → `docs/03-后端设计/B00_后端架构总览.md`
+- v2 Java 侧编排与降级 → `docs/02-重构设计/后端文档.md`
+- v2 Python 侧检索与生成 → `docs/02-重构设计/RAG文档.md`
+- 前端 mock 行为参照 → `frontend/src/mocks/handlers.ts`（同 28 端点）

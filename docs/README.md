@@ -173,7 +173,7 @@ D:\VM1\Xiaoyi_RAG_bookstore\
 │  ├─ scripts\     gate.mjs（四道门禁）/ smoke.mjs / regress.mjs（CDP 10 场景）/ snapshot.mjs
 │  ├─ dist\        Vite 构建产物（后端只服务这个目录）
 │  └─ README.md    启动方式、mock 与真实后端切换、三条硬约束
-├─ .snapshots\     阶段快照与已删 web/ 的归档（不进版本库）
+├─ .snapshots\     阶段快照与已删资产（web/、v1 前端文档）的归档（不进版本库）
 ├─ cli\            assistant.py 命令行版
 ├─ data\           6 份教学资料 .md（01–06，06 未核实）
 ├─ eval\           keywords.csv（判分关键词）
