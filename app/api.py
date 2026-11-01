@@ -257,8 +257,9 @@ def api_config(body: ConfigIn) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 静态页面
-# 前端已迁到 Vue 3 + Vite：源码在 web/src，构建产物在 web/dist。
+# 前端已迁到 Vue 3 + Vite：源码在 frontend/src，构建产物在 frontend/dist。
 # 运行时只服务 dist —— index.html 与 /static/assets/*。
+# 旧的 web/ 目录已删除（与 frontend/ 冲突）。
 _MISSING_DIST = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <title>前端尚未构建</title>
@@ -273,8 +274,8 @@ font-family:"Cascadia Mono",Consolas,monospace}
 p{font-size:13px;line-height:1.8;margin:8px 0}
 </style></head><body><div class="box">
 <h1>前端产物缺失</h1>
-<p>没有找到 <code>web/dist/index.html</code>。请先在 <code>web</code> 目录执行一次构建：</p>
-<p><code>cd web</code><br><code>npm install</code><br><code>npm run build</code></p>
+<p>没有找到 <code>frontend/dist/index.html</code>。请先在 <code>frontend</code> 目录执行一次构建：</p>
+<p><code>cd frontend</code><br><code>npm install</code><br><code>npm run build</code></p>
 <p>构建完成后刷新本页即可。后端接口（<code>/api/*</code>）不受影响，可直接用于命令行或自检。</p>
 </div></body></html>"""
 

@@ -10,9 +10,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 EVAL_DIR = ROOT / "eval"
-WEB_DIR = ROOT / "web"
+WEB_DIR = ROOT / "frontend"
 # Vue 3 + Vite 的构建产物目录；前端源码在 WEB_DIR/src，产物在 WEB_DIR/dist。
 # 运行时只需要 dist（index.html + assets），源码与 node_modules 都不参与服务。
+# 旧的 web/ 目录已删除（与 frontend/ 冲突），此常量指向新的 frontend/。
 WEB_DIST = WEB_DIR / "dist"
 WEB_ENTRY = WEB_DIST / "index.html"
 LOG_DIR = ROOT / "logs"

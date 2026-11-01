@@ -18,11 +18,11 @@ echo  关闭本窗口即可停止服务。
 echo ============================================================
 echo.
 
-if not exist "web\dist\index.html" (
-    echo [提示] 没有找到前端构建产物 web\dist\index.html。
+if not exist "frontend\dist\index.html" (
+    echo [提示] 没有找到前端构建产物 frontend\dist\index.html。
     echo        页面会显示"前端产物缺失"，但 /api 接口仍可正常使用。
     echo        要恢复界面，请先构建一次前端：
-    echo            cd web
+    echo            cd frontend
     echo            npm install
     echo            npm run build
     echo.
