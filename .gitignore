@@ -6,6 +6,7 @@ node_modules/
 dist/
 dist-ssr/
 build/
+target/
 *.local
 
 # ---- 测试与缓存 ----
@@ -45,3 +46,7 @@ desktop.ini
 
 # ---- 运行期数据（可重新生成） ----
 exports/
+# 上传的资料落在 server-java/storage/{documentId}/ 下（xiaoyi.storage.root），是运行期数据。
+# 第二条兜住「从仓库根起 java」时 ./storage 落到根上的情况——那是配置错位，不该进库。
+server-java/storage/
+/storage/
