@@ -1,0 +1,95 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: xiaoyi-rag-server
+
+  datasource:
+    # 口令只从环境变量读，绝不写进仓库：MYSQL_PASSWORD 是本机用户级变量
+    # （见 README「关键约定」第 1 条）。换机器时 export 同名变量即可，不用改本文件。
+    url: jdbc:mysql://127.0.0.1:3306/xiaoyi_rag?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 数据库不可用时不要卡住启动：连接池初始化失败直接放行，运行时再报
+      initialization-fail-timeout: -1
+      connection-timeout: 3000
+      maximum-pool-size: 10
+      minimum-idle: 1
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: false
+    show-sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+    connect-retries: 0
+
+  servlet:
+    multipart:
+      # 传输层上限刻意放宽到 10MB，业务上限 2MB 由 DocumentServiceImpl 自己判：
+      # 若这里也卡 2MB，超限文件会在进入 Controller 前就抛 MaxUploadSizeExceededException，
+      # 整批变成 40001，而契约要求的是「该文件进 data.skipped[] 且 reason=文件超过 2MB，整批仍回 code:0」。
+      max-file-size: 10MB
+      max-request-size: 50MB
+
+  jackson:
+    default-property-inclusion: always
+    serialization:
+      write-dates-as-timestamps: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    # 数据源已能真连（本机 MySQL80 + 环境变量口令），db 指示器保持开启：
+    # 连不上时 /actuator/health 会诚实地回 503，而不是假装健康。
+    db:
+      enabled: true
+
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# ---- 小忆自有配置 ----
+# cors 写成逗号分隔字符串而不是 YAML 列表：@Value 取列表类型会走占位符解析失败，
+# 用字符串 + @ConfigurationProperties 绑定最稳。
+xiaoyi:
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173
+  ai:
+    # J1 阶段走 MockAiClient，不真连 Python
+    base-url: ${AI_SERVICE_URL:http://127.0.0.1:8000}
+    internal-token: ${INTERNAL_TOKEN:dev-internal-token}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 60000
+    mock: true
+  storage:
+    root: ${STORAGE_ROOT:./storage}
+
+logging:
+  level:
+    root: INFO
+    com.xiaoyi.rag: DEBUG
+    org.flywaydb: INFO
