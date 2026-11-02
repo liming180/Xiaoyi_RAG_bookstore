@@ -18,6 +18,7 @@ public class XiaoyiProperties {
     private Ai ai = new Ai();
     private Storage storage = new Storage();
     private Chat chat = new Chat();
+    private Index index = new Index();
 
     public Cors getCors() {
         return cors;
@@ -49,6 +50,14 @@ public class XiaoyiProperties {
 
     public void setChat(Chat chat) {
         this.chat = chat;
+    }
+
+    public Index getIndex() {
+        return index;
+    }
+
+    public void setIndex(Index index) {
+        this.index = index;
     }
 
     /** 跨域白名单。 */
@@ -169,6 +178,54 @@ public class XiaoyiProperties {
 
         public void setMaxSuggestions(int maxSuggestions) {
             this.maxSuggestions = maxSuggestions;
+        }
+    }
+
+    /** 建库编排参数。 */
+    public static class Index {
+
+        /** 默认片段长度。与契约 chunkSize 的 50..1000 区间一致，取语料的自然段落量级。 */
+        private int defaultChunkSize = 180;
+
+        /** 默认重叠字数，必须小于 chunkSize。 */
+        private int defaultOverlap = 30;
+
+        /** embedding 模型名，写进 manifest 供 /index/status 展示。 */
+        private String embeddingModel = "mock-embedding";
+
+        /** 轮询入库任务的固定间隔（毫秒）。 */
+        private long pollIntervalMs = 1000L;
+
+        public int getDefaultChunkSize() {
+            return defaultChunkSize;
+        }
+
+        public void setDefaultChunkSize(int defaultChunkSize) {
+            this.defaultChunkSize = defaultChunkSize;
+        }
+
+        public int getDefaultOverlap() {
+            return defaultOverlap;
+        }
+
+        public void setDefaultOverlap(int defaultOverlap) {
+            this.defaultOverlap = defaultOverlap;
+        }
+
+        public String getEmbeddingModel() {
+            return embeddingModel;
+        }
+
+        public void setEmbeddingModel(String embeddingModel) {
+            this.embeddingModel = embeddingModel;
+        }
+
+        public long getPollIntervalMs() {
+            return pollIntervalMs;
+        }
+
+        public void setPollIntervalMs(long pollIntervalMs) {
+            this.pollIntervalMs = pollIntervalMs;
         }
     }
 }

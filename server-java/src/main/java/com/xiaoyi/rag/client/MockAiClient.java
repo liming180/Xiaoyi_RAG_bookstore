@@ -1,14 +1,22 @@
 package com.xiaoyi.rag.client;
 
 import com.xiaoyi.rag.client.dto.AiChatRequest;
+import com.xiaoyi.rag.client.dto.AiChunk;
 import com.xiaoyi.rag.client.dto.AiCitation;
+import com.xiaoyi.rag.client.dto.AiIndexManifest;
+import com.xiaoyi.rag.client.dto.AiIngestTask;
+import com.xiaoyi.rag.client.dto.AiParseDocumentItem;
+import com.xiaoyi.rag.client.dto.AiParseRequest;
+import com.xiaoyi.rag.client.dto.AiParseResult;
 import com.xiaoyi.rag.client.dto.AiStreamEvent;
 import com.xiaoyi.rag.config.XiaoyiProperties;
 import jakarta.annotation.PreDestroy;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -31,6 +39,9 @@ import org.springframework.stereotype.Component;
  *   <li>{@code mode=direct} 不发 retrieval 事件 —— 契约明写「direct 时不发」，前端靠这个区分两种模式。
  *   <li>{@code k} 会截断引用条数，这样 {@code k=1} 与 {@code k=3} 的 trace 行数不同，能验出参数真的生效。
  * </ul>
+ *
+ * <p>J4 增加了入库三方法。入库进度**按轮询次数推进**而不是按墙钟时间：轮询周期是 1s，按时间推进时阶段窗口 与轮询节拍不对齐就会整段跳过，测试断言「五个 stage
+ * 都出现过」会随机失败。 按次数推进则每次轮询必然前进一格，五个阶段一定被观察到。
  */
 @Component
 @ConditionalOnProperty(name = "xiaoyi.ai.mock", havingValue = "true", matchIfMissing = true)
@@ -49,6 +60,13 @@ public class MockAiClient implements AiServiceClient {
      * xiaoyi.ai.fail-mode=true} 仍然保留，给门禁脚本做「整服务不可用」的整体验证。
      */
     public static final String FAIL_MARKER = "[fail]";
+
+    /**
+     * 入库任务里带这个标记时，{@link #getIngestTask} 抛异常，用来验「轮询失败只重试、连续 30 次才 FAILED」。
+     *
+     * <p>和 {@link #FAIL_MARKER} 同样的理由：J4 阶段 Python 还不存在，只能靠 mock 主动失败。
+     */
+    public static final String POLL_FAIL_MARKER = "[pollfail]";
 
     private static final List<String> TOKENS =
             List.of("资料显示，", "读书会通常在", "每周六 14:00", "至 16:00 举行，", "地点在社区文化中心二层。");
@@ -99,6 +117,11 @@ public class MockAiClient implements AiServiceClient {
                             "rule",
                             false));
 
+    /** 建库阶段推进表：创建时是 parsing/0，之后每次轮询前进一格，第 4 次到 done/100。 */
+    private static final String[] INGEST_STAGES = {"splitting", "embedding", "summarizing", "done"};
+
+    private static final int[] INGEST_PROGRESS = {25, 50, 75, 100};
+
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(
                     r -> {
@@ -108,6 +131,11 @@ public class MockAiClient implements AiServiceClient {
                     });
 
     private final AtomicInteger sequence = new AtomicInteger();
+
+    private final AtomicInteger ingestSequence = new AtomicInteger();
+
+    /** 已登记的入库任务：taskId → 状态。 */
+    private final Map<String, MockIngest> ingests = new ConcurrentHashMap<>();
 
     private final XiaoyiProperties properties;
 
@@ -167,6 +195,86 @@ public class MockAiClient implements AiServiceClient {
         }
     }
 
+    @Override
+    public AiParseResult parseDocuments(AiParseRequest request) {
+        if (properties.getAi().isFailMode()) {
+            throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
+        }
+        List<AiParseDocumentItem> documents =
+                request == null || request.documents() == null ? List.of() : request.documents();
+        int chunkSize = request == null || request.chunkSize() == null ? 180 : request.chunkSize();
+        int overlap = request == null || request.overlap() == null ? 30 : request.overlap();
+        String taskId = "mock-ingest-" + ingestSequence.incrementAndGet();
+
+        MockIngest ingest = new MockIngest(taskId, documents, chunkSize, overlap);
+        ingests.put(taskId, ingest);
+        log.debug("MockAiClient 登记入库任务 {}，文档 {} 份", taskId, documents.size());
+        return new AiParseResult(taskId, documents.size());
+    }
+
+    @Override
+    public AiIngestTask getIngestTask(String taskId) {
+        if (properties.getAi().isFailMode()) {
+            throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
+        }
+        MockIngest ingest = ingests.get(taskId);
+        if (ingest == null) {
+            throw new IllegalStateException("mock 里没有入库任务：" + taskId);
+        }
+        if (ingest.pollFail) {
+            throw new IllegalStateException("mock poll-fail-marker：模拟轮询失败");
+        }
+
+        int step = ingest.step.getAndIncrement();
+        if (step >= INGEST_STAGES.length) {
+            // 已经走完还被轮询：重复回同一个终态，别让计数无限涨。
+            return ingest.finished();
+        }
+        String stage = INGEST_STAGES[step];
+        int progress = INGEST_PROGRESS[step];
+        boolean done = "done".equals(stage);
+        if (done) {
+            ingest.markFinished();
+        }
+        List<AiChunk> chunks = done ? ingest.chunks() : List.of();
+        return new AiIngestTask(
+                taskId,
+                done ? "SUCCEEDED" : "RUNNING",
+                stage,
+                progress,
+                ingest.documents.size(),
+                done ? chunks.size() : 0,
+                null,
+                chunks);
+    }
+
+    @Override
+    public AiIndexManifest getIndexManifest() {
+        if (properties.getAi().isFailMode()) {
+            throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
+        }
+        MockIngest latest = null;
+        for (MockIngest ingest : ingests.values()) {
+            if (ingest.finishedAt != null
+                    && (latest == null || ingest.finishedAt > latest.finishedAt)) {
+                latest = ingest;
+            }
+        }
+        if (latest == null) {
+            return new AiIndexManifest("needs_rebuild", null, null, null, 0, 0, null, null, "尚未建库");
+        }
+        return new AiIndexManifest(
+                "ready",
+                "mock-embedding",
+                latest.chunkSize,
+                latest.overlap,
+                latest.documents.size(),
+                latest.chunks().size(),
+                latest.finishedAt,
+                null,
+                null);
+    }
+
     /**
      * 按 k 截断引用池，并按 1..n 重编 ref，模拟真实 RAG 的 top-k 编号。
      *
@@ -199,5 +307,117 @@ public class MockAiClient implements AiServiceClient {
     @PreDestroy
     public void shutdown() {
         scheduler.shutdownNow();
+    }
+
+    /** 一个假入库任务的状态机。 */
+    private static final class MockIngest {
+
+        private final String taskId;
+
+        private final List<AiParseDocumentItem> documents;
+
+        private final int chunkSize;
+
+        private final int overlap;
+
+        private final boolean pollFail;
+
+        private final AtomicInteger step = new AtomicInteger();
+
+        private volatile Long finishedAt;
+
+        private volatile List<AiChunk> cached;
+
+        private MockIngest(
+                String taskId, List<AiParseDocumentItem> documents, int chunkSize, int overlap) {
+            this.taskId = taskId;
+            this.documents = documents;
+            this.chunkSize = chunkSize;
+            this.overlap = overlap;
+            this.pollFail =
+                    documents.stream()
+                            .anyMatch(
+                                    d ->
+                                            (d.name() != null
+                                                            && d.name().contains(POLL_FAIL_MARKER))
+                                                    || (d.text() != null
+                                                            && d.text()
+                                                                    .contains(POLL_FAIL_MARKER)));
+        }
+
+        private void markFinished() {
+            if (finishedAt == null) {
+                finishedAt = Instant.now().getEpochSecond();
+            }
+        }
+
+        /** 终态回包：progress 恒 100、chunks 恒全量。 */
+        private AiIngestTask finished() {
+            List<AiChunk> chunks = chunks();
+            return new AiIngestTask(
+                    taskId,
+                    "SUCCEEDED",
+                    "done",
+                    100,
+                    documents.size(),
+                    chunks.size(),
+                    null,
+                    chunks);
+        }
+
+        /**
+         * 按 chunkSize / overlap 切片段，规则与真实实现一致：从 0 开始每次前进 {@code chunkSize - overlap}， 直到覆盖全文。
+         *
+         * <p>chunkId 用 {@code D{doc}-C{seq}}，doc 取资料的 id（1..99 内直接用，超了回落请求内序号）， 与对外契约 {@code
+         * ^D\d{2}-C\d{3}$} 的模式一致。
+         */
+        private List<AiChunk> chunks() {
+            List<AiChunk> cachedLocal = cached;
+            if (cachedLocal != null) {
+                return cachedLocal;
+            }
+            synchronized (this) {
+                if (cached != null) {
+                    return cached;
+                }
+                List<AiChunk> built = new ArrayList<>();
+                int docSeq = 0;
+                for (AiParseDocumentItem doc : documents) {
+                    docSeq++;
+                    int docNo = docSeq;
+                    try {
+                        int parsed = Integer.parseInt(doc.docId());
+                        if (parsed >= 1 && parsed <= 99) {
+                            docNo = parsed;
+                        }
+                    } catch (NumberFormatException ignored) {
+                        // docId 不是数字就退回请求内序号
+                    }
+                    String text = doc.text() == null ? "" : doc.text();
+                    int stride = Math.max(1, chunkSize - overlap);
+                    int seq = 0;
+                    for (int start = 0; start < text.length() && seq < 999; start += stride) {
+                        int end = Math.min(text.length(), start + chunkSize);
+                        seq++;
+                        built.add(
+                                new AiChunk(
+                                        String.format("D%02d-C%03d", docNo, seq),
+                                        doc.docId(),
+                                        doc.title() == null ? doc.name() : doc.title(),
+                                        "",
+                                        text.substring(start, end),
+                                        start,
+                                        end,
+                                        "chunk",
+                                        true));
+                        if (end >= text.length()) {
+                            break;
+                        }
+                    }
+                }
+                cached = built;
+                return built;
+            }
+        }
     }
 }

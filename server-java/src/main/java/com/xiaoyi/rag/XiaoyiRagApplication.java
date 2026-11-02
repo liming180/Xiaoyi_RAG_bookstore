@@ -8,14 +8,19 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 小忆 RAG 问答系统 · Java 业务服务入口。
  *
  * <p>阶段 J1 只负责「能启动、能回统一信封、未实现路由统一 50101」， 不承载任何 RAG 逻辑。
+ *
+ * <p>{@code @EnableScheduling} 供 J4 的建库任务轮询使用（{@code @Scheduled(fixedDelayString =
+ * "${xiaoyi.index.poll-interval-ms:1000}")}）。
  */
 @SpringBootApplication
 @EnableConfigurationProperties(XiaoyiProperties.class)
+@EnableScheduling
 public class XiaoyiRagApplication {
 
     private static final Logger log = LoggerFactory.getLogger(XiaoyiRagApplication.class);

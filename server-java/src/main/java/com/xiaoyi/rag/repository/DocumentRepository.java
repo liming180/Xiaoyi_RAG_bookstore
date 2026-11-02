@@ -1,6 +1,7 @@
 package com.xiaoyi.rag.repository;
 
 import com.xiaoyi.rag.model.entity.Document;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -41,4 +42,22 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             "update Document d set d.status = 'NEEDS_REBUILD'"
                     + " where d.deleted = false and d.status = 'INDEXED'")
     int markIndexedAsNeedsRebuild();
+
+    /**
+     * 建库成功后把「待建/脏」的资料统一置为 INDEXED。
+     *
+     * <p>只动 {@code UPLOADING/NEEDS_REBUILD/PARSING} 三种状态：{@code DISABLED} 是用户主动停用的，
+     * 建库不该把它悄悄打开；{@code FAILED} 要留给用户看到失败原因。
+     *
+     * @return 受影响行数
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            "update Document d set d.status = 'INDEXED'"
+                    + " where d.deleted = false"
+                    + " and d.status in ('UPLOADING', 'NEEDS_REBUILD', 'PARSING')")
+    int markStaleAsIndexed();
+
+    /** 按状态取未删除资料（判定 /index/status 的 needs_rebuild 用）。 */
+    List<Document> findByDeletedFalseAndStatusIn(Collection<String> statuses);
 }

@@ -19,4 +19,10 @@ public interface IndexTaskRepository extends JpaRepository<IndexTask, Long> {
 
     /** 按状态取最近一条。 */
     Optional<IndexTask> findFirstByStatusOrderByCreatedAtDescIdDesc(String status);
+
+    /** 在跑的任务（轮询扫描用），按创建时间升序保证先进先出。 */
+    List<IndexTask> findByStatusInOrderByCreatedAtAsc(Collection<String> statuses);
+
+    /** 最近一条成功的任务，供 /index/status 比对参数。 */
+    Optional<IndexTask> findFirstByStatusOrderByFinishedAtDescIdDesc(String status);
 }
