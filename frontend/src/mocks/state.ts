@@ -21,6 +21,9 @@ import {
   SEED_SUGGESTIONS,
   T03_ANSWER,
   T10_ANSWER,
+  T11_ANSWER,
+  T12_ANSWER,
+  T13_ANSWER,
   buildChunks,
   buildDocuments,
   seedCitations,
@@ -168,6 +171,11 @@ export function pickAnswer(question: string, k: number, chunkSize = 180, overlap
   const q = question ?? '';
   const isFee = /费用|收费|多少钱|价格/.test(q);
   const isPhone = /电话|号码|联系/.test(q);
+  // T11/T12/T13 必须在 isBorrow 之前判：这三题的题干里也带「借」「本」，
+  // 落到 isBorrow 分支会拿到 T03 的答案，判分关键词一条都对不上。
+  const isPeriodical = /期刊/.test(q);
+  const isAdjustment = /11月14日|那一周|调整|有什么变化/.test(q);
+  const isRumor = /老成员|听说|6本|六本/.test(q);
   const isBorrow = /借|本|天|续借/.test(q);
 
   if (isFee || isPhone) {
@@ -177,6 +185,30 @@ export function pickAnswer(question: string, k: number, chunkSize = 180, overlap
       citations: citations.map((c, i) => ({ ...c, ref: i + 1 })),
       trace: seedTrace(q, k, chunkSize, overlap),
     };
+  }
+
+  if (isPeriodical) {
+    return {
+      content: T11_ANSWER,
+      citations: seedCitations(3, chunkSize, overlap).slice(0, k),
+      trace: seedTrace(q, k, chunkSize, overlap),
+    };
+  }
+
+  if (isAdjustment) {
+    return {
+      content: T12_ANSWER,
+      citations: seedCitations(4, chunkSize, overlap).slice(0, k),
+      trace: seedTrace(q, k, chunkSize, overlap),
+    };
+  }
+
+  if (isRumor) {
+    // 留言类问题：引 D06（未核实留言）+ D02（正式规则），答案必须先否定再给规则
+    const rumor = seedCitations(5, chunkSize, overlap).slice(0, 1);
+    const rule = seedCitations(1, chunkSize, overlap).slice(0, 1);
+    const citations = [...rumor, ...rule].map((c, i) => ({ ...c, ref: i + 1 }));
+    return { content: T13_ANSWER, citations, trace: seedTrace(q, k, chunkSize, overlap) };
   }
 
   if (isBorrow) {

@@ -77,8 +77,8 @@ describe('消息渲染（F04）', () => {
     expect(wrapper.findAll('[data-testid="msg-user"]')).toHaveLength(1);
     expect(wrapper.findAll('[data-testid="msg-assistant"]')).toHaveLength(1);
     expect(wrapper.get('[data-testid="msg-elapsed"]').text()).toContain('2.3 s');
-    expect(wrapper.text()).toContain('4 本');
-    expect(wrapper.text()).toContain('21 天');
+    expect(wrapper.text()).toContain('4本');
+    expect(wrapper.text()).toContain('21天');
   });
 
   it('空消息列表显示空态', () => {

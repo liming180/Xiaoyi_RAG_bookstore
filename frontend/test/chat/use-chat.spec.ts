@@ -26,15 +26,16 @@ describe('useChat 发送链路（F04）', () => {
 
     expect(ok).toBe(true);
     expect(chat.state.value.phase).toBe('done');
-    expect(chat.draft.value).toContain('4 本');
-    expect(chat.draft.value).toContain('21 天');
+    // 判分关键词是逐字 includes 匹配（4本/21天），答案里不能写成「4 本」
+    expect(chat.draft.value).toContain('4本');
+    expect(chat.draft.value).toContain('21天');
     expect(chat.citations.value.length).toBeGreaterThan(0);
     expect(chat.state.value.suggestions.length).toBeGreaterThan(0);
     expect(chat.state.value.elapsedMs).toBe(2100);
 
     expect(persisted).toHaveLength(1);
     expect(persisted[0]!.role).toBe('assistant');
-    expect(persisted[0]!.content).toContain('21 天');
+    expect(persisted[0]!.content).toContain('21天');
     expect(persisted[0]!.citations.length).toBeGreaterThan(0);
   });
 

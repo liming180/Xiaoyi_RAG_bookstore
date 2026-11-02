@@ -36,7 +36,7 @@ describe('api/chat 模块（走 MSW）', () => {
     expect(events).toContain('retrieval');
     expect(events).toContain('token');
     expect(events[events.length - 1]).toBe('done');
-    expect(text).toContain('4 本');
+    expect(text).toContain('4本');
   });
 
   it('清空对话后消息列表为空', async () => {

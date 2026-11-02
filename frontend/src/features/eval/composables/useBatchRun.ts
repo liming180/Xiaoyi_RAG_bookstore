@@ -45,7 +45,7 @@ export function useBatchRun() {
     error.value = null;
     try {
       questions.value = await evalApi.listQuestions();
-      // 默认全选：F09 的主路径就是「10 题全跑一遍」
+      // 默认全选：F09 的主路径就是「13 题全跑一遍」
       if (selectedIds.value.length === 0) {
         selectedIds.value = questions.value.map((q) => q.id);
       }

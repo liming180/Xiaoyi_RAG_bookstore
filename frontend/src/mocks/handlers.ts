@@ -448,7 +448,7 @@ const startBatch = http.post(`${BASE}/eval/batch`, async ({ request }) => {
     stats: null,
     mode: body.mode ?? 'both',
     k: body.k ?? 3,
-    // 用户勾选了哪几题就只跑哪几题；不传则跑满 T01–T10。
+    // 用户勾选了哪几题就只跑哪几题；不传则跑满 T01–T13。
     questionIds: body.questionIds?.length ? body.questionIds : QUESTIONS.map((q) => q.id),
     cases: [],
   };
@@ -468,7 +468,7 @@ const fetchRun = http.get(`${BASE}/eval/runs/:id`, ({ params }) => {
 
   if (run.cases.length === 0) {
     // 首次读取时生成完整结果（模拟异步执行完成）。
-    // 只跑用户勾选的那几题 —— 与 F09「选问题集」一致，不传才是 T01–T10 全量。
+    // 只跑用户勾选的那几题 —— 与 F09「选问题集」一致，不传才是 T01–T13 全量。
     const wanted = (run as unknown as { questionIds?: string[] }).questionIds;
     const qs = wanted?.length ? QUESTIONS.filter((q) => wanted.includes(q.id)) : QUESTIONS;
     const cases = qs.map((q) => {

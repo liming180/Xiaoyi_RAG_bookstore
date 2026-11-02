@@ -86,6 +86,9 @@ const QUESTIONS = [
   { id: 'T08', type: '跨文档', question: '报名读书会的截止时间和空间预约可提前的天数分别是什么？', keywords: '周五|2天/两天', evidence: '01_活动说明.md与03_空间预约.md' },
   { id: 'T09', type: '库外', question: '参加读书会要交多少费用？', keywords: '未提供/没有提供/未说明/没有说明/不包含/未提及', evidence: '无' },
   { id: 'T10', type: '库外', question: '管理员的联系电话是多少？', keywords: '未提供/没有提供/未说明/没有说明/不包含/未提及', evidence: '无' },
+  { id: 'T11', type: '单文档', question: '期刊最多同时借几本借期多久？', keywords: '2本/两本/二本|7天/七天', evidence: '04_期刊与工具书.md' },
+  { id: 'T12', type: '跨文档', question: '2026年11月14日那一周的读书会和平时相比开始时间与地点有什么变化？', keywords: '周日/星期日/星期天/礼拜天|15:00/15点|多功能厅/一层多功能厅', evidence: '05_活动调整通知.md与01_活动说明.md' },
+  { id: 'T13', type: '跨文档', question: '听说老成员可以同时借6本普通图书是这样吗？', keywords: '不是/并非/不可以/不能/不正确/错误|4本/四本', evidence: '06_成员留言摘录.md与02_借阅规则.md' },
 ];
 
 /** 判分：组间 `|` 全中，组内 `/` 命中其一 —— 与 mock 和规格 F09 一致。 */
@@ -130,7 +133,7 @@ function cite(ref, chunkId, score) {
 
 const ANSWERS = {
   T03: {
-    content: `根据资料，已登记成员每人最多同时借阅 **4 本**普通图书，每本借期 **21 天** [1]。
+    content: `根据资料，已登记成员每人最多同时借阅 **4本**普通图书，每本借期 **21天** [1]。
 
 需要注意的几点：
 
@@ -140,15 +143,15 @@ const ANSWERS = {
 
 | 项目 | 规则 |
 | --- | --- |
-| 同时借阅上限 | 4 本 |
-| 单本借期 | 21 天 |
+| 同时借阅上限 | 4本 |
+| 单本借期 | 21天 |
 | 续借次数 | 1 次 |
 
 以上内容来自《02_借阅规则.md》，仍建议核对原文。`,
     citations: [cite(1, 'D02-C001', 0.87), cite(2, 'D02-C003', 0.71)],
   },
   T07: {
-    content: `综合两份资料：周六共读活动 **16:00 结束** [1]；普通图书每人最多同时借 **4 本**，借期 21 天 [2]。
+    content: `综合两份资料：周六共读活动 **16:00 结束** [1]；普通图书每人最多同时借 **4本**，借期 21天 [2]。
 
 - 活动时间见《01_活动说明.md》与《05_活动调整通知.md》
 - 借阅上限见《02_借阅规则.md》`,
@@ -172,6 +175,34 @@ const ANSWERS = {
 因此无法给出具体号码。`,
     citations: [cite(1, 'D01-C001', 0.76), cite(2, 'D03-C002', 0.58)],
   },
+  T11: {
+    content: `根据资料，已登记成员每人最多同时借阅 **2本** 期刊，每本借期 **7天**，期刊不能续借 [1]。
+
+- 当月最新一期期刊只能在书屋内阅览，次月起才可外借 [1]
+- 期刊借阅数量与普通图书分开计算，不占用普通图书的额度 [1]
+
+以上内容来自《04_期刊与工具书.md》。`,
+    citations: [cite(1, 'D04-C001', 0.84)],
+  },
+  T12: {
+    content: `根据《05_活动调整通知.md》，2026年11月14日这一周读书会 **改到周日 15:00 开始**，地点改为 **一层多功能厅** [1]。
+
+- 开始时间由平时的周六 14:00 改为周日 15:00，结束 17:00 [1]
+- 地点由二层 A 区改为一层多功能厅 [1]
+- 报名截止相应调整为 11月14日周六 12:00 [1]
+
+这是仅针对该周的临时调整，其余各周仍按活动说明在周六 14:00 至 16:00 举行。`,
+    citations: [cite(1, 'D05-C001', 0.88)],
+  },
+  T13: {
+    content: `**不是**。这是成员留言里未经核实的说法。
+
+- 《06_成员留言摘录.md》的留言 1 说「老成员可以同时借 6 本」，但该资料写明内容未经核实、不代表正式规则 [1]
+- 正式规则以《02_借阅规则.md》为准：每人最多同时借阅 **4本** 普通图书，借期 21 天 [2]
+
+因此老成员同样是**最多 4本**，并没有 6本的额度。`,
+    citations: [cite(1, 'D06-C001', 0.66), cite(2, 'D02-C001', 0.9)],
+  },
   DEFAULT: {
     content: `根据资料，这一条需要核对原文后回答 [1]。`,
     citations: [cite(1, 'D01-C001', 0.66)],
@@ -187,6 +218,11 @@ const DIRECT_ANSWERS = {
 function pickAnswerKey(question) {
   if (question.includes('费用')) return 'T09';
   if (question.includes('联系电话')) return 'T10';
+  // T11/T12/T13 必须排在「借阅几本」之前：T11 与 T13 的题干里也含「借…本」，
+  // 先判会把它们错路由到 T03。
+  if (question.includes('期刊')) return 'T11';
+  if (question.includes('11月14日') || question.includes('那一周')) return 'T12';
+  if (question.includes('老成员') || question.includes('6本') || question.includes('六本')) return 'T13';
   if (question.includes('几点结束')) return 'T07';
   if (question.includes('借阅几本') || question.includes('借多久')) return 'T03';
   return 'DEFAULT';
@@ -904,18 +940,18 @@ const SCENARIOS = [
   },
   {
     name: 'eval-batch',
-    title: '批量对照测试：10 题两种回答 + 初判 + 通过数',
+    title: '批量对照测试：13 题两种回答 + 初判 + 通过数',
     async run(page, shot) {
       await page.goto(`${ORIGIN}/eval`);
       await page.waitFor(`!!document.querySelector('[data-testid="batch-start"]')`, { label: '开始测试按钮' });
       await page.waitFor(
-        `document.querySelectorAll('[data-testid^="pick-"]').length >= 10`,
-        { label: '10 道题' },
+        `document.querySelectorAll('[data-testid^="pick-"]').length >= 13`,
+        { label: '13 道题' },
       );
       await page.click('[data-testid="batch-start"]');
       await page.waitFor(
-        `document.querySelectorAll('[data-testid^="case-"]').length >= 10`,
-        { timeoutMs: 20000, label: '10 行结果' },
+        `document.querySelectorAll('[data-testid^="case-"]').length >= 13`,
+        { timeoutMs: 20000, label: '13 行结果' },
       );
       const passedRag = Number(
         await page.evaluate(

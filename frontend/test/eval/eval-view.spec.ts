@@ -15,10 +15,13 @@ import { getState, resetState } from '@/mocks/state';
 /**
  * 评测页集成（P5 / F09 + 套餐 §5 + 套餐 E3）。
  *
- * 真走 MSW：题目 10 道 → 批量对照真跑 → 历史真读 → 候选池真决定 → 实验真轮询。
+ * 真走 MSW：题目 13 道 → 批量对照真跑 → 历史真读 → 候选池真决定 → 实验真轮询。
  * MSW 的 fetch 是宏任务链，`flushPromises()` 只排空微任务，
  * 所以凡「等接口/等轮询回来」的断言一律走 waitFor，不用固定 sleep。
  */
+
+/** 种子题库题量：T01–T13（13 道，与 assets/eval/questions.csv 对齐） */
+const QUESTION_COUNT = 13;
 
 let pinia: ReturnType<typeof createPinia>;
 
@@ -64,33 +67,39 @@ describe('评测页（P5）', () => {
     clearAllListeners();
   });
 
-  it('挂载后默认落在批量对照页签，并拉满 10 道题', async () => {
+  it('挂载后默认落在批量对照页签，并拉满 13 道题', async () => {
     const { wrapper } = await mountPage();
     await waitFor(
-      () => wrapper.findAll('[data-testid^="pick-"]').length === 10,
+      () => wrapper.findAll('[data-testid^="pick-"]').length === QUESTION_COUNT,
       8000,
-      '10 道题',
+      `${QUESTION_COUNT} 道题`,
     );
 
     expect(wrapper.find('[data-testid="page-eval"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="tab-batch"]').attributes('aria-selected')).toBe('true');
     expect(wrapper.find('[data-testid="batch-runner"]').exists()).toBe(true);
     // 默认全选
-    expect(wrapper.get('[data-testid="question-picker"]').text()).toContain('10 / 10');
+    expect(wrapper.get('[data-testid="question-picker"]').text()).toContain(
+      `${QUESTION_COUNT} / ${QUESTION_COUNT}`,
+    );
   });
 
-  it('批量对照真跑：结果表 10 行、统计卡与「查资料更好」判定', async () => {
+  it('批量对照真跑：结果表 13 行、统计卡与「查资料更好」判定', async () => {
     const { wrapper } = await mountPage();
-    await waitFor(() => wrapper.findAll('[data-testid^="pick-"]').length === 10, 8000, '题目');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="pick-"]').length === QUESTION_COUNT,
+      8000,
+      '题目',
+    );
 
     await wrapper.get('[data-testid="batch-start"]').trigger('click');
     await waitFor(
-      () => wrapper.findAll('[data-testid^="case-"]').length === 10,
+      () => wrapper.findAll('[data-testid^="case-"]').length === QUESTION_COUNT,
       8000,
-      '结果表 10 行',
+      `结果表 ${QUESTION_COUNT} 行`,
     );
 
-    expect(wrapper.get('[data-testid="stat-total"]').text()).toContain('10');
+    expect(wrapper.get('[data-testid="stat-total"]').text()).toContain(String(QUESTION_COUNT));
     // 必须取 .batch__card-value 这一层：卡片里「通过数」和「百分比」是两个相邻元素，
     // Vue 的 whitespace:condense 会把它们之间的空白抹掉，整卡 textContent 拼成
     // "不查资料通过330%"，用正则抽数字会把 3 和 30 粘成 330。
@@ -109,9 +118,17 @@ describe('评测页（P5）', () => {
 
   it('批量结果可导出 CSV（带 BOM、文件名含时间戳）', async () => {
     const { wrapper } = await mountPage();
-    await waitFor(() => wrapper.findAll('[data-testid^="pick-"]').length === 10, 8000, '题目');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="pick-"]').length === QUESTION_COUNT,
+      8000,
+      '题目',
+    );
     await wrapper.get('[data-testid="batch-start"]').trigger('click');
-    await waitFor(() => wrapper.findAll('[data-testid^="case-"]').length === 10, 8000, '结果');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="case-"]').length === QUESTION_COUNT,
+      8000,
+      '结果',
+    );
 
     const createSpy = vi.spyOn(URL, 'createObjectURL');
     await wrapper.get('[data-testid="batch-export"]').trigger('click');
@@ -130,9 +147,17 @@ describe('评测页（P5）', () => {
   it('页签由 ?tab= 驱动：直接落到历史页签并读回刚才那次运行', async () => {
     // 先真跑一次，让历史里有记录
     const { wrapper, router } = await mountPage();
-    await waitFor(() => wrapper.findAll('[data-testid^="pick-"]').length === 10, 8000, '题目');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="pick-"]').length === QUESTION_COUNT,
+      8000,
+      '题目',
+    );
     await wrapper.get('[data-testid="batch-start"]').trigger('click');
-    await waitFor(() => wrapper.findAll('[data-testid^="case-"]').length === 10, 8000, '结果');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="case-"]').length === QUESTION_COUNT,
+      8000,
+      '结果',
+    );
 
     await router.push({ name: 'eval', query: { tab: 'history' } });
     await flushPromises();
@@ -154,7 +179,9 @@ describe('评测页（P5）', () => {
       8000,
       '历史详情',
     );
-    expect(wrapper.get('[data-testid="history-detail"]').findAll('[data-testid^="case-"]')).toHaveLength(10);
+    expect(
+      wrapper.get('[data-testid="history-detail"]').findAll('[data-testid^="case-"]'),
+    ).toHaveLength(QUESTION_COUNT);
   });
 
   it('候选池：纳入 / 忽略都会改状态，且「只看待定」把已处理的藏起来', async () => {
@@ -290,7 +317,11 @@ describe('评测页（P5）', () => {
 
   it('切换页签会换组件，且切走时停掉批量轮询', async () => {
     const { wrapper, router } = await mountPage();
-    await waitFor(() => wrapper.findAll('[data-testid^="pick-"]').length === 10, 8000, '题目');
+    await waitFor(
+      () => wrapper.findAll('[data-testid^="pick-"]').length === QUESTION_COUNT,
+      8000,
+      '题目',
+    );
     expect(wrapper.findComponent(BatchRunner).exists()).toBe(true);
 
     await router.push({ name: 'eval', query: { tab: 'candidates' } });
