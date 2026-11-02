@@ -1,0 +1,993 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+info:
+  title: 小忆 RAG 问答系统 · 内部 API 契约（Java ⇄ Python）
+  version: 1.0.0
+  summary: 仅内网可达。8 条接口，全部要求 X-Internal-Token。
+  description: |
+    # 小忆 RAG 问答系统 · 内部契约（J0 冻结版）
+
+    Java（`server-java/`）调用 Python（`server-ai/`）的**唯一**通道。
+    前端永远不知道本契约的存在（规格 §7.2）。
+
+    ## 覆盖范围
+
+    共 **8 条**接口，与规格 §7.4 一一对应。
+
+    ## 鉴权
+
+    全部 8 条都要求请求头 `X-Internal-Token: <token>`。
+    缺失或错误 → HTTP 401 + 信封 `{code:40102}`。
+    token 由环境变量 `INTERNAL_TOKEN` 注入，**不落代码库、不写进 `application.yml` 明文**。
+
+    ## 命名（与对外契约的关键差异）
+
+    内部**允许 snake_case**，但必须在本文件显式写出来，不能靠约定。逐条对照：
+
+    | 位置 | 内部（本文件） | 对外（`openapi-public.yaml`） |
+    |---|---|---|
+    | 引用正文 | `excerpt` | `text` |
+    | 引用片段号 | `chunk_id` | `chunkId` |
+    | 引用得分阶段 | `score_stage` | `stage` |
+    | 章节路径 | `heading_path` | `headingPath` |
+    | 资料标题 | `doc_title` | `docTitle` |
+    | 资料 id | `doc_id` | `docId` |
+    | 建库参数 | `chunk_size` / `overlap` | `chunkSize` / `overlap` |
+    | 计数 | `doc_count` / `chunk_count` | `docCount` / `chunkCount` |
+    | 时间戳 | `built_at` / `created_at` | `lastBuiltAt` / `createdAt` |
+
+    `ref` / `start` / `end` / `score` / `kind` / `verified` 两边同名。
+    Java 侧 `AiServiceClient` 负责映射：内部 snake_case → 对外 camelCase。
+
+    ## 信封
+
+    除 SSE 端点（`POST /internal/v1/chat/stream`）外，所有响应（含错误）都是
+    `{code, message, data, timestamp}`，见 `docs/api/envelope.schema.json`。
+
+    ## 禁止事项
+
+    不写 `servers`。地址由 `AI_SERVICE_URL`（默认 `http://server-ai:8000`）注入。
+  license:
+    name: Internal
+
+x-timestamp-unit: seconds
+x-envelope-schema: ./envelope.schema.json
+x-error-codes-doc: ./error-codes.md
+
+tags:
+  - name: 问答
+    description: RAG 问答流与纯检索
+  - name: 入库
+    description: 解析建库与任务进度
+  - name: 索引
+    description: manifest 与一致性
+  - name: 评测
+    description: 批量对照评测
+  - name: 运维
+    description: 健康检查
+
+security:
+  - internalToken: []
+
+paths:
+
+  # ---------------------------------------------------------------- 问答
+
+  /internal/v1/chat/stream:
+    post:
+      operationId: internalChatStream
+      tags: [问答]
+      summary: RAG 问答流（SSE，7 步编排）
+      description: |
+        Java 把用户问题与最近 5 轮历史透传过来，Python 完成在线 7 步：
+        改写 → 双路召回 top-20 → RRF(k=60) → 重排 → top-k → 上下文组装 → 生成。
+
+        **每一帧 `data:` 是独立 JSON，不包信封。**
+
+        事件顺序与对外契约一致（`status` → `retrieval` → `token`×N → `done`，
+        异常时 `error`），但 `retrieval.citations[]` 用**内部形状**
+        （`chunk_id` / `doc_title` / `heading_path` / `excerpt` / `score_stage`）。
+
+        `mode=both` 时由本端一次产出两路结果，`done` 里同时带
+        `direct_message_id` 与 `direct_content`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalChatRequest'
+      responses:
+        '200':
+          description: SSE 事件流
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: status
+                data: {"stage":"rewriting"}
+
+                event: status
+                data: {"stage":"retrieving"}
+
+                event: status
+                data: {"stage":"reranking"}
+
+                event: retrieval
+                data: {"citations":[{"ref":1,"chunk_id":"D02-C001","doc_id":"D02","doc_title":"02_借阅规则.md","heading_path":"# 星河读书会借阅规则","excerpt":"每次最多借阅 5 册。","start":0,"end":120,"score":0.87,"score_stage":"rerank","kind":"chunk","verified":true}]}
+
+                event: status
+                data: {"stage":"generating"}
+
+                event: token
+                data: {"content":"每次最多"}
+
+                event: done
+                data: {"message_id":"py-m-1","usage":{"prompt_tokens":812,"completion_tokens":96},"elapsed_ms":1420,"degraded":false,"suggestions":["可以续借吗？"]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40001, 40102, 50001, 50301]
+      x-sse-events:
+        - event: status
+          dataSchema: '#/components/schemas/InternalStatusEventData'
+        - event: retrieval
+          dataSchema: '#/components/schemas/InternalRetrievalEventData'
+        - event: token
+          dataSchema: '#/components/schemas/InternalTokenEventData'
+        - event: done
+          dataSchema: '#/components/schemas/InternalDoneEventData'
+        - event: error
+          dataSchema: '#/components/schemas/InternalErrorEventData'
+
+  /internal/v1/retrieve:
+    post:
+      operationId: internalRetrieve
+      tags: [问答]
+      summary: 只检索不生成
+      description: |
+        返回召回结果与完整打分链路，供 Java 侧 `GET /api/v1/chunks`
+        与 `GET /api/v1/messages/{id}/trace` 复用。
+
+        `list_mode=true` 时不走向量检索，直接按 `doc_ids` / `kind` 列片段
+        （给片段浏览页用）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalRetrieveRequest'
+      responses:
+        '200':
+          description: 召回结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInternalRetrieveResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40102, 50000]
+
+  # ---------------------------------------------------------------- 入库
+
+  /internal/v1/documents/parse:
+    post:
+      operationId: internalParseDocuments
+      tags: [入库]
+      summary: 触发解析入库（异步，立即返回 task_id）
+      description: |
+        离线 4 步：解析校验 → 递归切分 → 块元数据 → 批量嵌入 → upsert
+        → BM25 重建 → 写 manifest。
+
+        本端点**立即返回** `task_id`，进度靠 `GET /internal/v1/ingest/{task_id}` 轮询。
+
+        `chunk_size` / `overlap` 由 Java 传入（默认 180 / 30），
+        Python 必须如实记录到 manifest，不得静默改写。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalParseRequest'
+      responses:
+        '200':
+          description: 任务已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultParseAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40002, 40003, 40102, 50000]
+
+  /internal/v1/ingest/{task_id}:
+    get:
+      operationId: internalGetIngestTask
+      tags: [入库]
+      summary: 入库任务进度
+      description: |
+        Java 侧 `@Scheduled(fixedDelay=1000)` 轮询本端点，回写
+        `index_task` 的 status / stage / progress / doc_count / chunk_count。
+
+        `stage` 必须是五值白名单之一（`parsing|splitting|embedding|summarizing|done`），
+        Python 内部的细分阶段自行折叠，**不许原样透出**。
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: '由 `/documents/parse` 返回的任务 id'
+      responses:
+        '200':
+          description: 任务快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultIngestTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40102, 40402, 50000]
+
+  /internal/v1/documents/{id}/status:
+    get:
+      operationId: internalGetDocumentStatus
+      tags: [入库]
+      summary: 单份资料的解析状态
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: 资料 id
+      responses:
+        '200':
+          description: 资料状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDocumentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40102, 40401, 50000]
+
+  # ---------------------------------------------------------------- 索引
+
+  /internal/v1/index/status:
+    get:
+      operationId: internalGetIndexStatus
+      tags: [索引]
+      summary: manifest 摘要（模型 / 参数 / 一致性）
+      description: |
+        Java 侧 `GET /api/v1/index/status` 的判定依据：
+
+        - 本端点不可达 → 对外返回 `unavailable`（HTTP 仍是 200）
+        - 本端点返回的 `chunk_size` / `overlap` 与最近一次成功任务不一致 → 对外 `needs_rebuild`
+
+        `status` 只表达 Python 侧视图（`ready` / `needs_rebuild`），
+        `unavailable` 由 Java 在调用失败时自行合成。
+      responses:
+        '200':
+          description: manifest 摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultIndexManifest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40102, 50000, 50301]
+
+  # ---------------------------------------------------------------- 评测
+
+  /internal/v1/eval/batch:
+    post:
+      operationId: internalEvalBatch
+      tags: [评测]
+      summary: 批量对照评测（direct vs rag）
+      description: |
+        每题先 `direct` 后 `rag`，各自新建临时会话避免历史污染。
+
+        判分：`keywords` 按 `|` 分组、组内 `/` 命中其一、**组间全中**才算通过。
+        与前端 `frontend/src/mocks/state.ts` 的 `judge()` 逐字一致。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalEvalBatchRequest'
+      responses:
+        '200':
+          description: 评测结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInternalEvalBatchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40102, 50000]
+
+  # ---------------------------------------------------------------- 运维
+
+  /internal/v1/health:
+    get:
+      operationId: internalHealth
+      tags: [运维]
+      summary: 健康检查
+      description: |
+        Java 侧熔断判据：本端点连续失败 → chat 降级 direct
+        （`done.degraded=true`）、`/index/status` 降级 `unavailable`。
+      responses:
+        '200':
+          description: 健康
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40102, 50301]
+
+# ================================================================== 组件
+
+components:
+
+  securitySchemes:
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: '内网共享令牌，由 `INTERNAL_TOKEN` 环境变量注入。缺失或错误 → HTTP 401 + `40102`。'
+
+  responses:
+    BadRequest:
+      description: 参数校验失败（HTTP 400）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40001, 40002, 40003, 40004]
+    Unauthorized:
+      description: 内部令牌缺失或错误（HTTP 401）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40102]
+    NotFound:
+      description: 资源不存在（HTTP 404）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40401, 40402]
+    InternalError:
+      description: 服务内部错误（HTTP 500）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [50000, 50001]
+    ServiceUnavailable:
+      description: 依赖不可用（HTTP 503）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [50301]
+
+  schemas:
+
+    # ------------------------------------------------------------ 信封
+
+    Envelope:
+      type: object
+      title: ResultEnvelope
+      description: |
+        统一响应信封，与 `docs/api/envelope.schema.json` 同构。
+        不声明 `additionalProperties: false`，因为它被 `Result*` 用 `allOf` 组合。
+      required: [code, message, data, timestamp]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          description: '业务负载；失败时恒为 null。'
+        timestamp:
+          type: integer
+          description: 'Unix 时间戳，单位秒。'
+
+    ErrorEnvelope:
+      description: '失败信封：`code != 0` 且 `data` 恒为 `null`。'
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: 'null'
+
+    ResultParseAccepted:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ParseAccepted'
+
+    ResultIngestTask:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/IngestTask'
+
+    ResultDocumentStatus:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DocumentStatus'
+
+    ResultIndexManifest:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/IndexManifest'
+
+    ResultInternalRetrieveResult:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/InternalRetrieveResult'
+
+    ResultInternalEvalBatchResult:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/InternalEvalBatchResult'
+
+    ResultHealth:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Health'
+
+    # ------------------------------------------------------------ 基础
+
+    ChunkKind:
+      type: string
+      enum: [chunk, summary, rule]
+
+    # ------------------------------------------------------------ 问答
+
+    HistoryTurn:
+      type: object
+      required: [role, content]
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+
+    InternalChatRequest:
+      type: object
+      required: [question]
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          minLength: 1
+        history:
+          type: array
+          description: '最近 5 轮对话（Java 侧截断后传入）'
+          items:
+            $ref: '#/components/schemas/HistoryTurn'
+        mode:
+          type: string
+          enum: [rag, direct, both]
+          default: rag
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+        acl:
+          type: array
+          items:
+            type: string
+          description: '预留：资料访问控制标签，本期恒为空数组'
+
+    InternalCitation:
+      type: object
+      description: |
+        内部引用形状（**snake_case**）。与对外 `Citation` 的差异见 info.description 的对照表。
+      required: [ref, chunk_id, doc_id, doc_title, heading_path, excerpt, start, end, score, kind, verified]
+      additionalProperties: false
+      properties:
+        ref:
+          description: '引用编号双形状：整数序号或片段号字符串'
+          oneOf:
+            - type: integer
+              minimum: 1
+            - type: string
+              minLength: 1
+        chunk_id:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+        doc_id:
+          type: string
+          minLength: 1
+        doc_title:
+          type: string
+        heading_path:
+          type: string
+        excerpt:
+          type: string
+          minLength: 1
+          description: '片段正文（对应对外契约的 `text`）'
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        score_stage:
+          type: string
+          enum: [dense, sparse, rrf, rerank]
+          description: '得分所处阶段（对应对外契约的 `stage`）'
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
+
+    InternalTraceRow:
+      type: object
+      required: [rank, chunk_id, doc_id, doc_title, heading_path, excerpt, start, end, score, retrieved, kind, verified]
+      additionalProperties: false
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+        chunk_id:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+        doc_id:
+          type: string
+          minLength: 1
+        doc_title:
+          type: string
+        heading_path:
+          type: string
+        excerpt:
+          type: string
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        retrieved:
+          type: boolean
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
+
+    InternalRetrieveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          description: '`list_mode=true` 时可省略'
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+        chunk_size:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        doc_ids:
+          type: array
+          items:
+            type: string
+          description: '限定资料范围'
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        list_mode:
+          type: boolean
+          default: false
+          description: 'true 时不走向量检索，直接列片段'
+
+    InternalRetrieveResult:
+      type: object
+      required: [citations, rows]
+      additionalProperties: false
+      properties:
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalCitation'
+        rows:
+          type: array
+          description: '完整打分链路（未截断），供检索过程抽屉展示'
+          items:
+            $ref: '#/components/schemas/InternalTraceRow'
+
+    # ------------------------------------------------------------ SSE 帧（内部）
+
+    InternalStatusEventData:
+      type: object
+      required: [stage]
+      additionalProperties: false
+      properties:
+        stage:
+          type: string
+          enum: [rewriting, retrieving, reranking, generating]
+
+    InternalRetrievalEventData:
+      type: object
+      required: [citations]
+      additionalProperties: false
+      properties:
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalCitation'
+
+    InternalTokenEventData:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+
+    InternalDoneEventData:
+      type: object
+      required: [message_id, usage, elapsed_ms, degraded, suggestions]
+      additionalProperties: false
+      properties:
+        message_id:
+          type: string
+        usage:
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: integer
+            - type: 'null'
+        elapsed_ms:
+          type: integer
+          minimum: 0
+        degraded:
+          type: boolean
+        suggestions:
+          type: array
+          items:
+            type: string
+        direct_message_id:
+          type: string
+        direct_content:
+          type: string
+
+    InternalErrorEventData:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        fallback:
+          type: string
+
+    # ------------------------------------------------------------ 入库
+
+    ParseDocumentItem:
+      type: object
+      required: [doc_id, name, text]
+      additionalProperties: false
+      properties:
+        doc_id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          description: '文件名（含后缀）'
+        title:
+          type: string
+        text:
+          type: string
+          description: '已由 Java 解码为 UTF-8 的正文；Python 不再做编码猜测'
+        tags:
+          type: array
+          items:
+            type: string
+        version:
+          type: string
+
+    InternalParseRequest:
+      type: object
+      required: [documents, chunk_size, overlap]
+      additionalProperties: false
+      properties:
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ParseDocumentItem'
+        chunk_size:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+
+    ParseAccepted:
+      type: object
+      required: [task_id, doc_count]
+      additionalProperties: false
+      properties:
+        task_id:
+          type: string
+        doc_count:
+          type: integer
+          minimum: 0
+
+    IngestTask:
+      type: object
+      required: [task_id, status, stage, progress, doc_count, chunk_count]
+      additionalProperties: false
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        stage:
+          type: string
+          enum: [parsing, splitting, embedding, summarizing, done]
+          description: '五值白名单；Python 内部细分阶段必须折叠到这一层'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        doc_count:
+          type: integer
+          minimum: 0
+        chunk_count:
+          type: integer
+          minimum: 0
+        error:
+          type: string
+        created_at:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        finished_at:
+          oneOf:
+            - type: integer
+            - type: 'null'
+
+    DocumentStatus:
+      type: object
+      required: [doc_id, status, chunk_count]
+      additionalProperties: false
+      properties:
+        doc_id:
+          type: string
+        status:
+          type: string
+          enum: [UPLOADING, PARSING, INDEXED, FAILED, NEEDS_REBUILD, DISABLED]
+        chunk_count:
+          type: integer
+          minimum: 0
+        error:
+          type: string
+
+    # ------------------------------------------------------------ 索引
+
+    IndexManifest:
+      type: object
+      required: [status, embedding_model, chunk_size, overlap, doc_count, chunk_count, built_at]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ready, needs_rebuild]
+          description: '`unavailable` 由 Java 在调用失败时合成，Python 不返回'
+        embedding_model:
+          type: string
+        chunk_size:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        doc_count:
+          type: integer
+          minimum: 0
+        chunk_count:
+          type: integer
+          minimum: 0
+        built_at:
+          oneOf:
+            - type: integer
+            - type: 'null'
+          description: 'Unix 时间戳，单位秒；从未建库为 null'
+        sha256:
+          type: string
+          description: '语料集合摘要'
+        reason:
+          type: string
+
+    # ------------------------------------------------------------ 评测
+
+    InternalEvalCase:
+      type: object
+      required: [id, question, keywords]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: '题号 T01..T10'
+        question:
+          type: string
+        keywords:
+          type: string
+          description: '`|` 分组、组内 `/` 命中其一、组间全中'
+
+    InternalEvalBatchRequest:
+      type: object
+      required: [cases, mode, k]
+      additionalProperties: false
+      properties:
+        cases:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/InternalEvalCase'
+        mode:
+          type: string
+          enum: [rag, direct, both]
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    InternalEvalCaseResult:
+      type: object
+      required: [question_id, direct_answer, direct_passed, rag_answer, rag_passed, rag_sources, elapsed_ms]
+      additionalProperties: false
+      properties:
+        question_id:
+          type: string
+        direct_answer:
+          type: string
+        direct_passed:
+          type: boolean
+        rag_answer:
+          type: string
+        rag_passed:
+          type: boolean
+        rag_sources:
+          type: array
+          items:
+            type: string
+          description: '命中片段号'
+        elapsed_ms:
+          type: integer
+          minimum: 0
+
+    InternalEvalBatchResult:
+      type: object
+      required: [cases, total, passed_direct, passed_rag]
+      additionalProperties: false
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalEvalCaseResult'
+        total:
+          type: integer
+          minimum: 0
+        passed_direct:
+          type: integer
+          minimum: 0
+        passed_rag:
+          type: integer
+          minimum: 0
+
+    # ------------------------------------------------------------ 运维
+
+    Health:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        version:
+          type: string
+        embedding_model:
+          type: string
+        llm_model:
+          type: string
+        uptime_seconds:
+          type: integer
+          minimum: 0

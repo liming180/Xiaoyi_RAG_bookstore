@@ -1,0 +1,2269 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+info:
+  title: 小忆 RAG 问答系统 · 对外 API 契约
+  version: 1.0.0
+  summary: 前端唯一入口（Java /api/v1）。28 条业务接口。
+  description: |
+    # 小忆 RAG 问答系统 · 对外契约（J0 冻结版）
+
+    本文件是 `docs/api/` 下三份契约之一，为**唯一真相源**（规格 §7.6）：
+
+    - 前端：`npm run gen:api` → openapi-typescript → `frontend/src/types/api.d.ts`
+    - Java：openapi-generator → DTO / 接口骨架
+    - Python：不消费本文件（只消费 `openapi-internal.yaml`）
+
+    ## 覆盖范围
+
+    共 **28 条**业务接口（规格 §7.3 的 15 条是本清单的子集）。运维探针
+    `GET /actuator/health` 与 `GET /api/v1/health` 不属于本契约，见
+    `docs/02-重构设计/04_后端开发提示词.md` §5 阶段 J1。
+
+    ## 三条硬约束
+
+    1. **统一信封**：除 SSE 端点外，所有响应（含错误）都是
+       `{code, message, data, timestamp}`，定义见 `docs/api/envelope.schema.json`。
+    2. **SSE 例外**：`POST /api/v1/chat/stream` 返回 `text/event-stream`，
+       每一帧 `data:` 行是独立 JSON，不包信封。
+    3. **命名**：对外一律 camelCase（内部契约才允许 snake_case）。
+       时间戳字段一律 `integer`，单位**秒**（`x-timestamp-unit: seconds`）。
+
+    ## 禁止事项
+
+    本文件不写 `servers`（禁止在契约里固化地址）。服务地址由
+    `AI_SERVICE_URL` / `VITE_API_BASE` 等环境变量注入。
+  license:
+    name: Internal
+
+x-timestamp-unit: seconds
+x-envelope-schema: ./envelope.schema.json
+x-error-codes-doc: ./error-codes.md
+
+tags:
+  - name: 鉴权
+    description: 登录与当前用户
+  - name: 会话
+    description: 会话与消息的增删查
+  - name: 问答
+    description: SSE 流式问答、检索过程、反馈
+  - name: 知识库
+    description: 资料上传/更新/删除、片段浏览
+  - name: 索引
+    description: 建库状态、重建任务轮询
+  - name: 评测
+    description: T01–T13 批量对照、候选池、参数实验
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ---------------------------------------------------------------- 鉴权
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [鉴权]
+      summary: 登录换取 JWT
+      description: |
+        演示环境用户名任意非空即可（`demo` 映射到「演示用户」）。
+        `username` 为空 → `40001`。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultLoginResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 50000]
+
+  /api/v1/auth/profile:
+    get:
+      operationId: getProfile
+      tags: [鉴权]
+      summary: 取当前登录用户
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultUserInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  # ---------------------------------------------------------------- 会话
+
+  /api/v1/conversations:
+    get:
+      operationId: listConversations
+      tags: [会话]
+      summary: 会话列表
+      description: |
+        返回数组；同时兼容 `{items: [...]}` 形状（`ConversationList`）。
+        按 `updatedAt` 倒序。
+      responses:
+        '200':
+          description: 会话列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultConversationList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+    post:
+      operationId: createConversation
+      tags: [会话]
+      summary: 新建会话
+      description: '`title` 缺省为「新会话」。'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        '200':
+          description: 新建的会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultConversation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 50000]
+
+  /api/v1/conversations/{id}:
+    delete:
+      operationId: deleteConversation
+      tags: [会话]
+      summary: 删除会话及其消息
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: 删除成功，`data` 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40406, 50000]
+
+  /api/v1/conversations/{id}/messages:
+    get:
+      operationId: listMessages
+      tags: [会话]
+      summary: 会话内消息
+      description: |
+        按 `createdAt` 升序返回数组；同时兼容 `{items: [...]}` 形状（`MessageList`）。
+        助手消息自带 `citations` / `trace` / `usage` / `degraded` / `suggestions` / `feedback`。
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: 消息列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMessageList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40406, 50000]
+    delete:
+      operationId: clearMessages
+      tags: [会话]
+      summary: 清空会话消息（保留会话与建库参数）
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: 清空成功，`data` 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40406, 50000]
+
+  # ---------------------------------------------------------------- 问答
+
+  /api/v1/chat/stream:
+    post:
+      operationId: chatStream
+      tags: [问答]
+      summary: 流式问答（SSE）
+      description: |
+        `POST` + `Accept: text/event-stream`，返回 `text/event-stream; charset=utf-8`。
+
+        **每一帧 `data:` 是独立 JSON，不包信封**（本契约唯一的信封例外）。
+
+        事件顺序：
+
+        1. `status` × N：`{"stage":"rewriting"|"retrieving"|"reranking"|"generating"}`
+        2. `retrieval`：`{"citations": Citation[]}`（`mode=direct` 时不发）
+        3. `token` × N：`{"content":"..."}`
+        4. `done`：`{"messageId","usage","elapsedMs","degraded","suggestions","directMessageId?","directContent?"}`
+        5. `error`（仅异常）：`{"code","message","fallback?"}`
+
+        **降级**：Python 不可达或熔断时不发 `error`，改发 `done{degraded:true}`，
+        HTTP 仍是 200；前端凭 `done.degraded` 判断。
+
+        **互斥**：参数实验 RUNNING 期间直接 `409` + `40901`，不进入编排。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: SSE 事件流
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: 固定 `no-cache`
+            Connection:
+              schema:
+                type: string
+              description: 固定 `keep-alive`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: '逐帧 `event: <name>` + `data: <json>` + 空行的纯文本流'
+              example: |
+                event: status
+                data: {"stage":"rewriting"}
+
+                event: status
+                data: {"stage":"retrieving"}
+
+                event: status
+                data: {"stage":"reranking"}
+
+                event: retrieval
+                data: {"citations":[{"ref":1,"chunkId":"D02-C001","docId":"D02","docTitle":"02_借阅规则.md","headingPath":"# 星河读书会借阅规则","text":"每次最多借阅 5 册。","start":0,"end":120,"score":0.87,"stage":"rerank","kind":"chunk","verified":true}]}
+
+                event: status
+                data: {"stage":"generating"}
+
+                event: token
+                data: {"content":"每次最多"}
+
+                event: done
+                data: {"messageId":"m-2002","usage":{"promptTokens":812,"completionTokens":96},"elapsedMs":1420,"degraded":false,"suggestions":["可以续借吗？","逾期怎么处理？"]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40001, 40100, 40901, 50001, 50301]
+      x-sse-events:
+        - event: status
+          dataSchema: '#/components/schemas/StatusEventData'
+          description: 阶段推进，至少 3 帧
+        - event: retrieval
+          dataSchema: '#/components/schemas/RetrievalEventData'
+          description: 引用列表，`mode=direct` 时省略
+        - event: token
+          dataSchema: '#/components/schemas/TokenEventData'
+          description: 增量正文，至少 1 帧
+        - event: done
+          dataSchema: '#/components/schemas/DoneEventData'
+          description: 终帧，携带 messageId 与降级标记
+        - event: error
+          dataSchema: '#/components/schemas/ErrorEventData'
+          description: 仅异常路径；降级路径改用 done.degraded
+
+  /api/v1/messages/{id}/trace:
+    get:
+      operationId: getMessageTrace
+      tags: [问答]
+      summary: 某条助手消息的检索过程
+      description: |
+        返回 `RetrievalTrace`。
+
+        - 消息存在但**没有检索过程**（`direct` 模式产出、或该消息是用户消息）→ `data` 为 `null`，
+          **不报错**（`code: 0`）。
+        - 消息本身不存在 → `404` + `40407`「消息不存在」。
+
+        前端 `frontend/src/api/modules/chat.ts:62` 的返回类型是 `Promise<RetrievalTrace | null>`，
+        依赖 `data: null` 这个宽松约定。
+      parameters:
+        - $ref: '#/components/parameters/MessageId'
+      responses:
+        '200':
+          description: 检索过程或 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRetrievalTrace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40407, 50000]
+
+  # ---------------------------------------------------------------- 知识库
+
+  /api/v1/documents:
+    get:
+      operationId: listDocuments
+      tags: [知识库]
+      summary: 资料列表
+      description: '返回数组；兼容 `{items: [...]}`（`DocumentList`）。'
+      responses:
+        '200':
+          description: 资料列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDocumentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+    post:
+      operationId: uploadDocuments
+      tags: [知识库]
+      summary: 批量上传资料（multipart）
+      description: |
+        表单字段名固定 `files`，可多选。**逐文件校验，任一不过进 `skipped`，
+        不中断整批**。五道校验：
+
+        1. 后缀 ∈ `.md` / `.txt` → 否则「只接受 .md / .txt 文件」
+        2. 大小 ≤ 2 MB → 否则「文件超过 2MB」
+        3. 正文非空 → 否则「文件没有正文」
+        4. UTF-8 可解码
+        5. 文件名防穿越（只取 basename）
+
+        成功入库后 `GET /api/v1/index/status` 变 `needs_rebuild`。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              additionalProperties: false
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    format: binary
+            encoding:
+              files:
+                contentType: text/markdown, text/plain
+      responses:
+        '200':
+          description: 接收结果（accepted / skipped）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 50000]
+
+  /api/v1/documents/{id}:
+    put:
+      operationId: updateDocument
+      tags: [知识库]
+      summary: 更新资料元数据
+      description: |
+        只允许改 `title` / `tags` / `version` / `status` 四类字段。
+        `status=DISABLED` 即停用（前端「启停用」开关走这里）。
+        任何改动都会把索引置 `needs_rebuild`。
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDocumentRequest'
+      responses:
+        '200':
+          description: 更新后的资料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDocumentMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 40401, 50000]
+    delete:
+      operationId: deleteDocument
+      tags: [知识库]
+      summary: 删除资料
+      description: 删除后索引置 `needs_rebuild`，`reason` 记「已删除 <文件名>」。
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: 删除成功，`data` 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40401, 50000]
+
+  /api/v1/chunks:
+    get:
+      operationId: listChunks
+      tags: [知识库]
+      summary: 片段浏览（三路过滤）
+      description: |
+        `docId` 按资料过滤；`q` 按正文子串匹配（大小写敏感，前端本地也做同样过滤）；
+        `kind` 按 `chunk|summary|rule` 过滤。三个参数可任意组合。
+        返回数组；兼容 `{items: [...]}`（`ChunkItemList`）。
+      parameters:
+        - name: docId
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EntityId'
+          description: 资料 id
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 正文关键词
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ChunkKind'
+          description: 片段类型
+      responses:
+        '200':
+          description: 片段列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultChunkItemList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 50000]
+
+  # ---------------------------------------------------------------- 索引
+
+  /api/v1/index/status:
+    get:
+      operationId: getIndexStatus
+      tags: [索引]
+      summary: 索引状态（状态灯）
+      description: |
+        判定规则（手册 J4）：
+
+        - 有资料处于 `UPLOADING` / `PARSING` / `FAILED`，或任一资料 `NEEDS_REBUILD` → `needs_rebuild`
+        - manifest 的 `chunkSize`/`overlap` 与最近一次成功任务不一致 → `needs_rebuild`
+        - Python `/internal/v1/index/status` 不可达 → `unavailable`
+        - 其余 → `ready`
+
+        `unavailable` 是**成功响应**（HTTP 200），不是 503。
+      responses:
+        '200':
+          description: 索引状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultIndexStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  /api/v1/index/rebuild:
+    post:
+      operationId: rebuildIndex
+      tags: [索引]
+      summary: 触发建库（异步）
+      description: |
+        校验：`50 ≤ chunkSize ≤ 1000`（否则 `40002`）；`0 ≤ overlap < chunkSize`（否则 `40003`）。
+        校验通过 → 建 `index_task`（`PENDING`）→ 异步解析入库 → 立即返回任务 VO。
+        轮询 `GET /api/v1/index/tasks/{id}` 拿进度。
+
+        **串行**：已有 `RUNNING` 任务时再 POST 返回 `409` + `40903`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebuildRequest'
+      responses:
+        '200':
+          description: 新建的建库任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultIndexTask'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40002, 40003, 40100, 40903, 50301]
+
+  /api/v1/index/tasks/{id}:
+    get:
+      operationId: getIndexTask
+      tags: [索引]
+      summary: 建库任务进度
+      description: |
+        轮询端点，前端 1s 一次。`stage` 五值白名单，终态（`SUCCEEDED`/`FAILED`）时
+        `progress=100`（失败则停在失败时的值）并写 `finishedAt`。
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务 VO
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultIndexTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40402, 50000]
+
+  # ---------------------------------------------------------------- 评测
+
+  /api/v1/eval/questions:
+    get:
+      operationId: listEvalQuestions
+      tags: [评测]
+      summary: T01–T13 题库
+      description: '返回数组；兼容 `{items: [...]}`（`EvalQuestionList`）。'
+      responses:
+        '200':
+          description: 题库
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultEvalQuestionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  /api/v1/eval/batch:
+    post:
+      operationId: startEvalBatch
+      tags: [评测]
+      summary: 启动批量对照评测
+      description: |
+        每题先 `direct` 后 `rag`，各自新建临时会话避免历史污染。判分规则与前端
+        `judge()` 完全一致：`|` 分组、组内 `/` 命中其一、组间全中才算通过。
+        异步执行，立即返回 run 摘要（`stats` 此时可为 `null`）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalBatchRequest'
+      responses:
+        '200':
+          description: run 摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultEvalRunSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-error-codes: [40001, 40100, 50001, 50301]
+
+  /api/v1/eval/runs:
+    get:
+      operationId: listEvalRuns
+      tags: [评测]
+      summary: 评测记录摘要列表（不含 cases）
+      responses:
+        '200':
+          description: run 摘要数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultEvalRunSummaryList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  /api/v1/eval/runs/{id}:
+    get:
+      operationId: getEvalRun
+      tags: [评测]
+      summary: 单次评测完整结果（含 cases）
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: 完整 run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultEvalRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40403, 50000]
+
+  /api/v1/messages/{id}/feedback:
+    post:
+      operationId: submitFeedback
+      tags: [问答]
+      summary: 消息反馈（👍/👎）
+      description: |
+        `rating=down` 时自动往候选池插一条
+        `{source:"feedback", status:"pending", question: 该消息对应的用户提问}`。
+      parameters:
+        - $ref: '#/components/parameters/MessageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '200':
+          description: 反馈已记录，`data` 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 40407, 50000]
+
+  /api/v1/feedback/summary:
+    get:
+      operationId: getFeedbackSummary
+      tags: [问答]
+      summary: 反馈汇总（含待处理候选数）
+      responses:
+        '200':
+          description: 汇总
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultFeedbackSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  /api/v1/eval/candidates:
+    get:
+      operationId: listEvalCandidates
+      tags: [评测]
+      summary: badcase 候选池
+      responses:
+        '200':
+          description: 候选数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultEvalCandidateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
+  /api/v1/eval/candidates/{id}/decision:
+    post:
+      operationId: decideEvalCandidate
+      tags: [评测]
+      summary: 候选采纳 / 忽略
+      parameters:
+        - $ref: '#/components/parameters/CandidateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CandidateDecisionRequest'
+      responses:
+        '200':
+          description: 处理成功，`data` 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40100, 40404, 50000]
+
+  /api/v1/eval/experiments:
+    post:
+      operationId: createExperiment
+      tags: [评测]
+      summary: 创建参数实验
+      description: |
+        展开 `axes` 笛卡尔积，**跳过 `overlap >= chunkSize` 的非法组合**；
+        展开后为空 → `40004`。创建后置 `status=RUNNING`、`progress=0`，
+        并置全局 `experimentRunning=true`；期间 `POST /api/v1/chat/stream` 返回 `40901`。
+
+        **互斥**：已有实验 RUNNING → `409` + `40902`。
+
+        展开逻辑后端必须独立实现一份并作为真相源（前端 `expandAxes` 只是预览）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExperimentRequest'
+      responses:
+        '200':
+          description: 新建的实验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultExperiment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40001, 40002, 40003, 40004, 40100, 40902, 50000]
+
+  /api/v1/eval/experiments/{id}:
+    get:
+      operationId: getExperiment
+      tags: [评测]
+      summary: 实验进度
+      description: '终态（`SUCCEEDED`/`FAILED`）时解除 `experimentRunning` 互斥。'
+      parameters:
+        - $ref: '#/components/parameters/ExperimentId'
+      responses:
+        '200':
+          description: 实验进度
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultExperiment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40405, 50000]
+
+  /api/v1/eval/experiments/{id}/report:
+    get:
+      operationId: getExperimentReport
+      tags: [评测]
+      summary: 实验报告（各组指标）
+      parameters:
+        - $ref: '#/components/parameters/ExperimentId'
+      responses:
+        '200':
+          description: 实验与各组指标
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultExperimentReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 40405, 50000]
+
+# ================================================================== 组件
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: '`Authorization: Bearer <token>`。缺失或过期 → `401` + `40100`。'
+
+  parameters:
+    ConversationId:
+      name: id
+      in: path
+      required: true
+      description: 会话 id（字符串或数字，序列化后作为 URL 片段）
+      schema:
+        type: string
+        minLength: 1
+    MessageId:
+      name: id
+      in: path
+      required: true
+      description: 消息 id
+      schema:
+        type: string
+        minLength: 1
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      description: 资料 id
+      schema:
+        type: string
+        minLength: 1
+    TaskId:
+      name: id
+      in: path
+      required: true
+      description: 建库任务 id
+      schema:
+        type: string
+        minLength: 1
+    RunId:
+      name: id
+      in: path
+      required: true
+      description: 评测记录 id
+      schema:
+        type: string
+        minLength: 1
+    CandidateId:
+      name: id
+      in: path
+      required: true
+      description: 候选 id
+      schema:
+        type: string
+        minLength: 1
+    ExperimentId:
+      name: id
+      in: path
+      required: true
+      description: 实验 id
+      schema:
+        type: string
+        minLength: 1
+
+  responses:
+    BadRequest:
+      description: 参数校验失败（HTTP 400）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40001, 40002, 40003, 40004]
+    Unauthorized:
+      description: 未认证 / 登录已过期（HTTP 401）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40100, 40102]
+    NotFound:
+      description: 资源不存在（HTTP 404）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40401, 40402, 40403, 40404, 40405, 40406, 40407]
+    Conflict:
+      description: 业务冲突（HTTP 409）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [40901, 40902, 40903]
+    InternalError:
+      description: 服务内部错误（HTTP 500）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [50000, 50001]
+    ServiceUnavailable:
+      description: AI 服务不可用（HTTP 503）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+      x-error-codes: [50301]
+
+  schemas:
+
+    # ------------------------------------------------------------ 信封
+
+    Envelope:
+      type: object
+      title: ResultEnvelope
+      description: |
+        统一响应信封，与 `docs/api/envelope.schema.json` 同构。
+        此处不声明 `additionalProperties: false`，因为它被 `Result*` 用 `allOf` 组合
+        （JSON Schema 里 `additionalProperties: false` 在 `allOf` 分支中会误伤兄弟分支的
+        `data` 属性）。独立校验请用那份 JSON Schema。
+      required: [code, message, data, timestamp]
+      properties:
+        code:
+          type: integer
+          description: '业务码。0 成功；非 0 失败，取值见 `docs/api/error-codes.md`。'
+        message:
+          type: string
+          description: '人类可读提示。成功固定 `success`。'
+        data:
+          description: '业务负载。失败时恒为 `null`。'
+        timestamp:
+          type: integer
+          description: 'Unix 时间戳，单位秒。'
+
+    ErrorEnvelope:
+      description: '失败信封：`code != 0` 且 `data` 恒为 `null`。'
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: 'null'
+
+    ResultVoid:
+      description: '成功信封，`data` 为 `null`。'
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: 'null'
+
+    ResultLoginResult:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/LoginResult'
+
+    ResultUserInfo:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/UserInfo'
+
+    ResultConversation:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Conversation'
+
+    ResultConversationList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ConversationList'
+
+    ResultMessageList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/MessageList'
+
+    ResultRetrievalTrace:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              oneOf:
+                - $ref: '#/components/schemas/RetrievalTrace'
+                - type: 'null'
+
+    ResultDocumentList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DocumentList'
+
+    ResultDocumentMeta:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DocumentMeta'
+
+    ResultUploadResult:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/UploadResult'
+
+    ResultIndexStatus:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/IndexStatus'
+
+    ResultIndexTask:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/IndexTask'
+
+    ResultChunkItemList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ChunkItemList'
+
+    ResultEvalQuestionList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/EvalQuestionList'
+
+    ResultEvalRunSummary:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/EvalRunSummary'
+
+    ResultEvalRunSummaryList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/EvalRunSummaryList'
+
+    ResultEvalRun:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/EvalRun'
+
+    ResultFeedbackSummary:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/FeedbackSummary'
+
+    ResultEvalCandidateList:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/EvalCandidateList'
+
+    ResultExperiment:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Experiment'
+
+    ResultExperimentReport:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ExperimentReport'
+
+    # ------------------------------------------------------------ 基础
+
+    EntityId:
+      description: |
+        实体 id。**双形状**：`"c-2001"`（mock 与 UUID 风格）或 `1`（数据库自增）。
+        前端一律 `String(id)` 后拼 URL，两种都能跑；契约放宽以免锁死实现。
+      oneOf:
+        - type: string
+          minLength: 1
+        - type: integer
+          minimum: 1
+
+    UserInfo:
+      type: object
+      required: [id, username, displayName]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          description: 用户主键
+        username:
+          type: string
+        displayName:
+          type: string
+          description: '展示名；`demo` 映射为「演示用户」'
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          description: '演示环境不校验强度'
+
+    LoginResult:
+      type: object
+      required: [token, expiresIn, user]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+        expiresIn:
+          type: integer
+          description: '有效期，单位秒（默认 86400）'
+        user:
+          $ref: '#/components/schemas/UserInfo'
+
+    # ------------------------------------------------------------ 会话
+
+    Conversation:
+      type: object
+      required: [id, title, createdAt, updatedAt, messageCount]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        title:
+          type: string
+        createdAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        updatedAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        messageCount:
+          type: integer
+          minimum: 0
+
+    ConversationList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`（分页预留）。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Conversation'
+
+    CreateConversationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          description: '缺省「新会话」'
+
+    # ------------------------------------------------------------ 引用与消息
+
+    ChunkKind:
+      type: string
+      enum: [chunk, summary, rule]
+      description: 'chunk 正文片段 / summary 章节或全局摘要 / rule 规则条目'
+
+    CitationRef:
+      description: |
+        引用编号**双形状**（J0 门禁硬性要求，两种都必须校验通过）：
+
+        - `1`（整数序号，1..k）：前端渲染成上标 `[1]`
+        - `"D02-C001"`（片段号）：便于溯源与跨消息复用
+      oneOf:
+        - type: integer
+          minimum: 1
+        - type: string
+          minLength: 1
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+
+    Citation:
+      type: object
+      required: [ref, chunkId, docId, docTitle, headingPath, text, start, end, score, kind, verified]
+      additionalProperties: false
+      properties:
+        ref:
+          $ref: '#/components/schemas/CitationRef'
+        chunkId:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+          description: '片段号 `D{2位文档序号}-C{3位片段序号}`'
+        docId:
+          $ref: '#/components/schemas/EntityId'
+        docTitle:
+          type: string
+          description: '资料标题（用于引用卡片抬头）'
+        headingPath:
+          type: string
+          description: '章节路径，如 `# 星河读书会借阅规则 > ## 续借`'
+        text:
+          type: string
+          minLength: 1
+          description: '片段正文（可能被截断）'
+        start:
+          type: integer
+          minimum: 0
+          description: '在原文中的起始字符偏移'
+        end:
+          type: integer
+          minimum: 0
+          description: '结束字符偏移（不含）'
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: '相关性得分 0..1'
+        stage:
+          type: string
+          enum: [dense, sparse, rrf, rerank]
+          description: '得分所处阶段'
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
+          description: '资料是否通过人工审核；false 时 UI 标注「未审核」'
+
+    TraceRow:
+      type: object
+      required: [rank, chunkId, docId, docTitle, headingPath, text, start, end, score, retrieved, kind, verified]
+      additionalProperties: false
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+        chunkId:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+        docId:
+          $ref: '#/components/schemas/EntityId'
+        docTitle:
+          type: string
+        headingPath:
+          type: string
+        text:
+          type: string
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        retrieved:
+          type: boolean
+          description: '是否进入最终 top-k 上下文'
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
+
+    RetrievalTrace:
+      type: object
+      required: [question, k, chunkSize, overlap, rows]
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          description: '改写后的查询'
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceRow'
+
+    Message:
+      type: object
+      required: [id, conversationId, role, content, createdAt, citations, trace, usage, elapsedMs, degraded, suggestions, feedback]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        conversationId:
+          $ref: '#/components/schemas/EntityId'
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        createdAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Citation'
+        trace:
+          oneOf:
+            - $ref: '#/components/schemas/RetrievalTrace'
+            - type: 'null'
+        usage:
+          description: 'token 用量；无则为 null'
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: integer
+            - type: 'null'
+        elapsedMs:
+          type: integer
+          minimum: 0
+          description: '耗时，单位毫秒（时长，不是时间戳）'
+        degraded:
+          type: boolean
+          description: 'true 表示本次走了降级 direct 路径'
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: '追问推荐 chips（B1 扩展）'
+        feedback:
+          oneOf:
+            - type: string
+              enum: [up, down]
+            - type: 'null'
+        error:
+          type: string
+          description: '生成失败时的错误摘要；正常为空'
+
+    MessageList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+
+    AnswerMode:
+      type: string
+      enum: [rag, direct, both]
+      description: 'rag 检索增强 / direct 直答 / both 双栏对照（由 Python 一次完成）'
+
+    ChatRequest:
+      type: object
+      required: [question]
+      additionalProperties: false
+      properties:
+        conversationId:
+          $ref: '#/components/schemas/EntityId'
+        question:
+          type: string
+          minLength: 1
+        mode:
+          $ref: '#/components/schemas/AnswerMode'
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+          description: '召回条数，默认 3'
+
+    # ------------------------------------------------------------ SSE 帧
+
+    StreamStage:
+      type: string
+      enum: [rewriting, retrieving, reranking, generating]
+      description: '阶段白名单，前端据此渲染步骤条'
+
+    StatusEventData:
+      type: object
+      required: [stage]
+      additionalProperties: false
+      properties:
+        stage:
+          $ref: '#/components/schemas/StreamStage'
+
+    RetrievalEventData:
+      type: object
+      required: [citations]
+      additionalProperties: false
+      properties:
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Citation'
+
+    TokenEventData:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+
+    DoneEventData:
+      type: object
+      required: [messageId, usage, elapsedMs, degraded, suggestions]
+      additionalProperties: false
+      properties:
+        messageId:
+          $ref: '#/components/schemas/EntityId'
+        usage:
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: integer
+            - type: 'null'
+        elapsedMs:
+          type: integer
+          minimum: 0
+        degraded:
+          type: boolean
+          description: 'true = Python 不可达，已降级为 direct，HTTP 仍 200'
+        suggestions:
+          type: array
+          items:
+            type: string
+        directMessageId:
+          $ref: '#/components/schemas/EntityId'
+        directContent:
+          type: string
+          description: 'both 模式下直答正文'
+
+    ErrorEventData:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        fallback:
+          type: string
+          description: '降级建议，如 `direct`'
+
+    # ------------------------------------------------------------ 资料
+
+    DocumentStatus:
+      type: string
+      enum: [UPLOADING, PARSING, INDEXED, FAILED, NEEDS_REBUILD, DISABLED]
+
+    DocumentMeta:
+      type: object
+      required: [id, name, title, tags, version, charCount, chunkCount, status, verified, updatedAt]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        name:
+          type: string
+          description: '文件名（含后缀）'
+        title:
+          type: string
+          description: '资料标题'
+        tags:
+          type: array
+          items:
+            type: string
+        version:
+          type: string
+          description: '版本号，如 `v1`'
+        charCount:
+          type: integer
+          minimum: 0
+        chunkCount:
+          type: integer
+          minimum: 0
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        verified:
+          type: boolean
+        updatedAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        error:
+          type: string
+          description: '解析失败原因；正常为空'
+
+    DocumentList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/DocumentMeta'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/DocumentMeta'
+
+    UpdateDocumentRequest:
+      type: object
+      additionalProperties: false
+      description: '只允许改这四类字段；`status=DISABLED` 即停用。'
+      properties:
+        title:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        version:
+          type: string
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+
+    UploadSkipped:
+      type: object
+      required: [name, reason]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        reason:
+          type: string
+          description: '中文原因，如「文件超过 2MB」'
+
+    UploadResult:
+      type: object
+      required: [accepted, skipped]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentMeta'
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadSkipped'
+
+    # ------------------------------------------------------------ 索引
+
+    IndexStatusValue:
+      type: string
+      enum: [ready, needs_rebuild, unavailable]
+
+    IndexManifest:
+      type: object
+      description: '最近一次成功建库的 manifest 快照（前端以它为准，不硬编码常量）。'
+      additionalProperties: false
+      properties:
+        embeddingModel:
+          type: string
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        docCount:
+          type: integer
+          minimum: 0
+        chunkCount:
+          type: integer
+          minimum: 0
+        builtAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        sha256:
+          type: string
+          description: '语料集合摘要，用于判定一致性'
+
+    IndexStatus:
+      type: object
+      required: [status, docCount, chunkCount, chunkSize, overlap, embeddingModel, lastBuiltAt]
+      additionalProperties: false
+      properties:
+        status:
+          $ref: '#/components/schemas/IndexStatusValue'
+        docCount:
+          type: integer
+          minimum: 0
+        chunkCount:
+          type: integer
+          minimum: 0
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        embeddingModel:
+          type: string
+        lastBuiltAt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+          description: 'Unix 时间戳，单位秒；从未建库为 null'
+        reason:
+          oneOf:
+            - type: string
+            - type: 'null'
+          description: 'needs_rebuild / unavailable 的原因，如「资料已变更」'
+        manifest:
+          $ref: '#/components/schemas/IndexManifest'
+
+    IndexTaskStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+
+    IndexTaskStage:
+      type: string
+      enum: [parsing, splitting, embedding, summarizing, done]
+
+    IndexTask:
+      type: object
+      required: [id, status, stage, progress, chunkSize, overlap, docCount, chunkCount, startedAt, finishedAt]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        status:
+          $ref: '#/components/schemas/IndexTaskStatus'
+        stage:
+          $ref: '#/components/schemas/IndexTaskStage'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        docCount:
+          type: integer
+          minimum: 0
+        chunkCount:
+          type: integer
+          minimum: 0
+        error:
+          type: string
+        startedAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        finishedAt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+          description: 'Unix 时间戳，单位秒；未结束为 null'
+
+    RebuildRequest:
+      type: object
+      required: [chunkSize, overlap]
+      additionalProperties: false
+      properties:
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+          description: '50..1000，越界 → 40002'
+        overlap:
+          type: integer
+          minimum: 0
+          description: '0 ≤ overlap < chunkSize，否则 → 40003'
+
+    ChunkItem:
+      type: object
+      required: [chunkId, docId, docTitle, headingPath, text, start, end, kind, verified, index]
+      additionalProperties: false
+      properties:
+        chunkId:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+        docId:
+          $ref: '#/components/schemas/EntityId'
+        docTitle:
+          type: string
+        headingPath:
+          type: string
+        text:
+          type: string
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
+        index:
+          type: integer
+          minimum: 0
+          description: '全局序号，用于稳定排序'
+
+    ChunkItemList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/ChunkItem'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChunkItem'
+
+    # ------------------------------------------------------------ 评测
+
+    EvalQuestion:
+      type: object
+      required: [id, type, question, keywords, evidence]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: '题号 T01..T10'
+        type:
+          type: string
+          enum: [single, cross, out]
+          description: 'single 单文档 / cross 跨文档 / out 库外'
+        question:
+          type: string
+        keywords:
+          type: string
+          description: '判分关键词：`|` 分组，组内 `/` 命中其一，组间全中'
+        evidence:
+          type: string
+          description: '证据文件名'
+
+    EvalQuestionList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/EvalQuestion'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/EvalQuestion'
+
+    EvalCaseResult:
+      type: object
+      required: [questionId, type, question, directAnswer, directPassed, ragAnswer, ragPassed, ragSources, elapsedMs]
+      additionalProperties: false
+      properties:
+        questionId:
+          type: string
+        type:
+          type: string
+          enum: [single, cross, out]
+        question:
+          type: string
+        directAnswer:
+          type: string
+        directPassed:
+          type: boolean
+        ragAnswer:
+          type: string
+        ragPassed:
+          type: boolean
+        ragSources:
+          type: array
+          items:
+            type: string
+          description: '命中片段号列表'
+        elapsedMs:
+          type: integer
+          minimum: 0
+
+    EvalStats:
+      type: object
+      required: [total, passedDirect, passedRag]
+      additionalProperties: false
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        passedDirect:
+          type: integer
+          minimum: 0
+        passedRag:
+          type: integer
+          minimum: 0
+
+    EvalRunSummary:
+      type: object
+      required: [id, createdAt, finishedAt, status, progress, stats, mode, k]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        createdAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        finishedAt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+          description: 'Unix 时间戳，单位秒'
+        status:
+          $ref: '#/components/schemas/IndexTaskStatus'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        stats:
+          oneOf:
+            - $ref: '#/components/schemas/EvalStats'
+            - type: 'null'
+          description: '未跑完时为 null'
+        mode:
+          $ref: '#/components/schemas/AnswerMode'
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    EvalRunSummaryList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/EvalRunSummary'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/EvalRunSummary'
+
+    EvalRun:
+      description: '完整评测记录：摘要字段 + cases。'
+      allOf:
+        - $ref: '#/components/schemas/EvalRunSummary'
+        - type: object
+          required: [cases]
+          properties:
+            cases:
+              type: array
+              items:
+                $ref: '#/components/schemas/EvalCaseResult'
+
+    EvalBatchRequest:
+      type: object
+      required: [questionIds, mode, k]
+      additionalProperties: false
+      properties:
+        questionIds:
+          type: array
+          items:
+            type: string
+          description: '为空则跑全部 T01..T10'
+        mode:
+          $ref: '#/components/schemas/AnswerMode'
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    # ------------------------------------------------------------ 反馈
+
+    FeedbackRating:
+      type: string
+      enum: [up, down]
+
+    FeedbackRequest:
+      type: object
+      required: [rating]
+      additionalProperties: false
+      properties:
+        rating:
+          $ref: '#/components/schemas/FeedbackRating'
+        tags:
+          type: array
+          items:
+            type: string
+          description: '问题标签，如「答非所问」'
+        comment:
+          type: string
+
+    FeedbackSummary:
+      type: object
+      required: [total, up, down, candidates]
+      additionalProperties: false
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        up:
+          type: integer
+          minimum: 0
+        down:
+          type: integer
+          minimum: 0
+        candidates:
+          type: integer
+          minimum: 0
+          description: '待处理候选数（status=pending）'
+
+    EvalCandidate:
+      type: object
+      required: [id, question, source, status, createdAt]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        question:
+          type: string
+        source:
+          type: string
+          enum: [feedback, manual]
+        status:
+          type: string
+          enum: [pending, accepted, ignored]
+        createdAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+
+    EvalCandidateList:
+      description: '列表双形状：裸数组（后端默认）或 `{items}`。'
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/EvalCandidate'
+        - type: object
+          required: [items]
+          additionalProperties: false
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/EvalCandidate'
+
+    CandidateDecisionRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [accepted, ignored]
+
+    # ------------------------------------------------------------ 实验
+
+    ExperimentAxis:
+      type: object
+      required: [chunkSize, overlap, k, rerank, summary]
+      additionalProperties: false
+      properties:
+        chunkSize:
+          type: array
+          items:
+            type: integer
+            minimum: 50
+            maximum: 1000
+        overlap:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+        k:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 10
+        rerank:
+          type: array
+          items:
+            type: boolean
+        summary:
+          type: array
+          items:
+            type: boolean
+          description: '是否启用全局摘要（A5）'
+
+    ExperimentParams:
+      type: object
+      required: [chunkSize, overlap, k, rerank, summary]
+      additionalProperties: false
+      properties:
+        chunkSize:
+          type: integer
+          minimum: 50
+          maximum: 1000
+        overlap:
+          type: integer
+          minimum: 0
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10
+        rerank:
+          type: boolean
+        summary:
+          type: boolean
+
+    ExperimentMetrics:
+      type: object
+      required: [hitRate, avgElapsedMs, avgSources, failed]
+      additionalProperties: false
+      properties:
+        hitRate:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: '命中率 0..1'
+        avgElapsedMs:
+          type: integer
+          minimum: 0
+        avgSources:
+          type: number
+          minimum: 0
+          description: '平均引用条数'
+        failed:
+          type: integer
+          minimum: 0
+
+    ExperimentRun:
+      type: object
+      required: [id, params, metrics, elapsedMs]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        params:
+          $ref: '#/components/schemas/ExperimentParams'
+        metrics:
+          $ref: '#/components/schemas/ExperimentMetrics'
+        elapsedMs:
+          type: integer
+          minimum: 0
+
+    Experiment:
+      type: object
+      required: [id, name, status, progress, totalGroups, finishedGroups, createdAt, finishedAt]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/EntityId'
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/IndexTaskStatus'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        totalGroups:
+          type: integer
+          minimum: 0
+          description: '笛卡尔积展开后的合法组合数'
+        finishedGroups:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: integer
+          description: 'Unix 时间戳，单位秒'
+        finishedAt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+          description: 'Unix 时间戳，单位秒'
+        error:
+          type: string
+
+    ExperimentReport:
+      type: object
+      required: [experiment, runs]
+      additionalProperties: false
+      properties:
+        experiment:
+          $ref: '#/components/schemas/Experiment'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExperimentRun'
+
+    CreateExperimentRequest:
+      type: object
+      required: [name, axes]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: '缺省「参数实验」'
+        axes:
+          $ref: '#/components/schemas/ExperimentAxis'

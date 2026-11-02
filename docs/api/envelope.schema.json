@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResultEnvelope",
+  "description": "小忆 RAG 问答系统统一响应信封。除 SSE 端点（POST /api/v1/chat/stream、POST /internal/v1/chat/stream）外，所有 HTTP 响应体——成功与失败——都必须符合本 schema。SSE 端点的每一帧 `data:` 行是独立 JSON，不受本 schema 约束。",
+  "type": "object",
+  "required": ["code", "message", "data", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "type": "integer",
+      "description": "业务状态码。0 表示成功；非 0 表示失败，取值与含义见 docs/api/error-codes.md。"
+    },
+    "message": {
+      "type": "string",
+      "description": "人类可读提示。成功时固定为 \"success\"；失败时为中文短句，与 error-codes.md 中的 message 列逐字一致。"
+    },
+    "data": {
+      "description": "业务负载。成功时为对应端点的 data 结构；失败时恒为 null。",
+      "type": ["object", "array", "string", "number", "integer", "boolean", "null"]
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "服务端生成该响应时的 Unix 时间戳，单位：秒。"
+    }
+  },
+  "examples": [
+    {
+      "code": 0,
+      "message": "success",
+      "data": {},
+      "timestamp": 1730000000
+    },
+    {
+      "code": 40401,
+      "message": "资料不存在",
+      "data": null,
+      "timestamp": 1730000000
+    }
+  ],
+  "$defs": {
+    "ErrorEnvelope": {
+      "title": "ErrorEnvelope",
+      "description": "失败信封：code 非 0，data 恒为 null。所有端点的错误响应都引用本定义。",
+      "allOf": [
+        { "$ref": "#" },
+        {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "data": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "Citation": {
+      "title": "Citation",
+      "description": "对外引用条目。ref 允许两种形状：数字序号（1..k，前端渲染成上标）或片段号字符串（如 D02-C001，便于溯源）。同一响应内两种形状可混用。",
+      "type": "object",
+      "required": [
+        "ref",
+        "chunkId",
+        "docId",
+        "docTitle",
+        "headingPath",
+        "text",
+        "start",
+        "end",
+        "score",
+        "kind",
+        "verified"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "description": "引用编号。数字形状表示第几条引用；字符串形状为片段号 D{2位文档序号}-C{3位片段序号}。",
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          ]
+        },
+        "chunkId": {
+          "type": "string",
+          "pattern": "^D\\d{2}-C\\d{3}$",
+          "description": "片段号，D{2位文档序号}-C{3位片段序号}。"
+        },
+        "docId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "资料 id，与 GET /api/v1/documents 返回的 DocumentMeta.id 一致。"
+        },
+        "docTitle": {
+          "type": "string",
+          "description": "资料标题，用于前端引用卡片标题。"
+        },
+        "headingPath": {
+          "type": "string",
+          "description": "片段所在章节路径，如 \"# 星河读书会借阅规则 > ## 续借\"。"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "片段正文（可能被截断为摘要）。"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "片段在原文中的起始字符偏移。"
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "片段在原文中的结束字符偏移（不含）。"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "相关性得分，0..1。"
+        },
+        "stage": {
+          "type": "string",
+          "enum": ["dense", "sparse", "rrf", "rerank"],
+          "description": "得分所处阶段：dense 向量召回、sparse 关键词召回、rrf 融合、rerank 重排。"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["chunk", "summary", "rule"],
+          "description": "片段类型：chunk 正文片段、summary 章节/全局摘要、rule 规则条目。"
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "该资料是否通过人工审核；false 的片段在 UI 上标注「未审核」。"
+        }
+      }
+    },
+    "TraceRow": {
+      "title": "TraceRow",
+      "description": "检索链路明细行，供前端「检索过程」抽屉展示。",
+      "type": "object",
+      "required": [
+        "rank",
+        "chunkId",
+        "docId",
+        "docTitle",
+        "headingPath",
+        "text",
+        "start",
+        "end",
+        "score",
+        "retrieved",
+        "kind",
+        "verified"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "排名，从 1 开始。"
+        },
+        "chunkId": {
+          "type": "string",
+          "pattern": "^D\\d{2}-C\\d{3}$"
+        },
+        "docId": { "type": "string", "minLength": 1 },
+        "docTitle": { "type": "string" },
+        "headingPath": { "type": "string" },
+        "text": { "type": "string" },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "retrieved": {
+          "type": "boolean",
+          "description": "是否被最终选中进入 top-k 上下文。"
+        },
+        "kind": { "type": "string", "enum": ["chunk", "summary", "rule"] },
+        "verified": { "type": "boolean" }
+      }
+    },
+    "RetrievalTrace": {
+      "title": "RetrievalTrace",
+      "description": "一次问答的检索过程快照。",
+      "type": "object",
+      "required": ["question", "k", "chunkSize", "overlap", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "question": { "type": "string" },
+        "k": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "chunkSize": { "type": "integer", "minimum": 50, "maximum": 1000 },
+        "overlap": { "type": "integer", "minimum": 0 },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TraceRow" }
+        }
+      }
+    }
+  }
+}
