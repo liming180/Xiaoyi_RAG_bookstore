@@ -287,6 +287,64 @@ def sse_stream():
 # --------------------------------------------------------------------------- 数据清理
 
 
+def _clear_storage() -> None:
+    """删掉 `STORAGE_ROOT` 下的全部条目（不删根目录本身，服务启动时已建好）。"""
+    if not STORAGE_ROOT.exists():
+        return
+    import shutil
+
+    for entry in STORAGE_ROOT.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+
+
+def reset_ingest_state() -> bool:
+    """清空建库相关状态：`chunk` / `index_task` / `document` 三张表 + `storage/` 下的资料文件。
+
+    返回是否真的执行了（没装 pymysql 或连不上库时返回 False）。
+
+    为什么必须连 `document` 一起清
+    ------------------------------
+    `IndexServiceImpl.rebuild()` 会把**所有**未删资料塞进一次 `parseDocuments` 请求，
+    `triggerParse` 再逐个读磁盘。只清 `chunk` / `index_task` 的话，历史资料会随着用例
+    数量线性累积：J4 首轮 29 个用例一共堆了几十份资料，单次建库要重新解析全部文件，
+    整体跑了 4248 秒（70 分钟），并且让 15s 的 `wait_until` 直接超时。
+
+    为什么还要清磁盘
+    ----------------
+    `clean_db` 只删表行不删文件，残留目录会一直留在 `server-java/storage/` 下；
+    清干净后「上传 → 落盘 → 删除」这类断言才不会被上一轮的残留误导。
+    """
+    try:
+        import pymysql  # type: ignore
+    except ImportError:
+        return False
+
+    try:
+        conn = pymysql.connect(
+            host=DB_HOST,
+            port=int(DB_PORT),
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            autocommit=True,
+        )
+    except Exception:  # noqa: BLE001 - 无 DB 环境下静默降级
+        return False
+
+    try:
+        with conn.cursor() as cur:
+            for table in ("chunk", "index_task", "document"):
+                cur.execute(f"DELETE FROM {table}")  # noqa: S608 - 表名来自常量
+    finally:
+        conn.close()
+
+    _clear_storage()
+    return True
+
+
 @pytest.fixture
 def clean_db():
     """每个用例前后清空 message / conversation / document / index_task / eval_run。
@@ -303,6 +361,7 @@ def clean_db():
     tables: Iterable[str] = (
         "message",
         "conversation",
+        "chunk",
         "document",
         "index_task",
         "eval_run",
@@ -325,6 +384,7 @@ def clean_db():
                     cur.execute(f"DELETE FROM {table}")  # noqa: S608 - 表名来自常量
         finally:
             conn.close()
+        _clear_storage()
 
     try:
         _truncate()

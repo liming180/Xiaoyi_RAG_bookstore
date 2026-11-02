@@ -49,14 +49,21 @@ def test_missing_body_field_returns_40001_with_http_400(java_client):
     assert set(body) == {"code", "message", "data", "timestamp"}, body
 
 
-def test_rebuild_with_invalid_chunk_size_returns_40001(java_client):
-    """chunkSize 越界 → @Min/@Max 拦截 → 40001 / 400。"""
+def test_rebuild_with_invalid_chunk_size_returns_40002(java_client):
+    """chunkSize 越界 → 40002 / 400（业务校验，不是 Bean Validation 的 40001）。
+
+    J1 骨架阶段这条端点还是 `throw new ApiException(50101)`，越界由 `@Min/@Max` 先拦成 40001；
+    J4 把 `@Min/@Max` 从 `RebuildRequest` 上摘掉后，区间判定搬进 `IndexServiceImpl.validate`，
+    按 `docs/api/error-codes.md:79` 的拍板回 40002。这里断言的是**契约**，不是框架行为。
+    """
     resp = java_client.post("/api/v1/index/rebuild", json={"chunkSize": 10, "overlap": 0})
 
     assert resp.status_code == 400, resp.text
     body = resp.json()
-    assert body["code"] == 40001, body
-    assert "50" in body["message"] or "片段" in body["message"], body["message"]
+    assert body["code"] == 40002, body
+    assert "50" in body["message"] and "1000" in body["message"], body["message"]
+    assert body["data"] is None
+    assert set(body) == {"code", "message", "data", "timestamp"}, body
 
 
 def test_malformed_json_returns_40001(java_client):

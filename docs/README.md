@@ -2,8 +2,8 @@
 
 > 对应《实验一：RAG 个人知识库助手实验指导书》（广东东软学院，设计性实验，6 学时）。
 > 本仓库是该实验的**完整可运行实现**：前端 `frontend/`（Vue 3 + Vite 5 + TypeScript，已落地）；
-> 后端 v2 规划为 **Java 业务网关（`server-java/`）+ Python AI 服务（`server-ai/`）**：Java 侧 J0–J3 已完成，Python 侧尚未创建。
-> **最后核对**：2026-11-02（后端 J0 契约 79 项 / J1 骨架 61 项 / J2 CRUD 30 项 / J3 SSE 32 项全绿；前端 303 项测试 + 10 份门禁 + 7 项冒烟 + 10 场景回归全绿；后端 v1 已于 11-01 删除归档）
+> 后端 v2 规划为 **Java 业务网关（`server-java/`）+ Python AI 服务（`server-ai/`）**：Java 侧 J0–J4 已完成，Python 侧尚未创建。
+> **最后核对**：2026-11-02（后端 J0 契约 79 项 / J1 骨架 61 项 / J2 CRUD 30 项 / J3 SSE 32 项 / J4 建库 30 项全绿；前端 303 项测试 + 10 份门禁 + 7 项冒烟 + 10 场景回归全绿；后端 v1 已于 11-01 删除归档）
 
 ---
 
@@ -170,7 +170,7 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 浏览器实测 | 冒烟 7 项 + CDP 回归 10 场景全 PASS，**21 张截图** |
 | 构建产物 | `vendor-ui 798 kB (gzip 252)` + `vendor 189 (68)` + `vendor-vue 114 (44)` + 各页面 chunk |
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
-| 后端 v2 | **J0 契约 + J1 骨架 + J2 CRUD + J3 SSE 已完成**：`docs/api/` 四份契约、`server-java/`（Spring Boot 3.2.10 / Java 21，7 张表 Flyway 迁移、28 条路由回统一信封、会话/消息/资料 12 条接口真落库、`POST /chat/stream` SSE 五类事件流式问答 + `GET /messages/{id}/trace` 检索轨迹）、根 `test/`（pytest 十阶段，J0 79 / J1 61 / J2 30 / J3 32 全绿）。`server-ai/` 尚未创建 |
+| 后端 v2 | **J0 契约 + J1 骨架 + J2 CRUD + J3 SSE + J4 建库已完成**：`docs/api/` 四份契约、`server-java/`（Spring Boot 3.2.10 / Java 21，9 张表 Flyway 迁移（V2 加 `chunk` 缓存表）、28 条路由回统一信封、会话/消息/资料 12 条接口真落库、`POST /chat/stream` SSE 五类事件流式问答 + `GET /messages/{id}/trace` 检索轨迹、`POST /index/rebuild` 串行建库 + `@Scheduled` 轮询五阶段推进 + `GET /chunks` 片段浏览）、根 `test/`（pytest 十阶段，J0 79 / J1 61 / J2 30 / J3 32 / J4 30 全绿）。`server-ai/` 尚未创建 |
 
 ## 六、目录与文件对照（代码在哪）
 
@@ -186,7 +186,7 @@ D:\VM1\Xiaoyi_RAG_bookstore\
 │  ├─ data\        6 份教学资料 .md（01–06，06 未核实）
 │  └─ eval\        questions.csv（13 道测试题 T01–T13）+ keywords.csv（判分关键词）
 ├─ docs\           本文档体系（含 `api/` 四份契约）
-├─ server-java\    Java 网关（Spring Boot 3.2.10 / Java 21，J0–J3 已完成）
+├─ server-java\    Java 网关（Spring Boot 3.2.10 / Java 21，J0–J4 已完成）
 ├─ test\           后端门禁测试（pytest，J0→A3 十阶段）
 ├─ .snapshots\     阶段快照与已删资产的归档（web/、v1 前端文档、v1 后端源码，不进版本库）
 └─ .gitattributes  .gitignore

@@ -17,6 +17,9 @@
 - J3：`getMessageTrace` 也实现了（不存在/无轨迹都回标准信封），移入已实现清单；
   `chatStream` 是 SSE 端点，响应体不是信封而是事件流，所以单列一张 STREAM_ROUTE 表，
   只验「校验失败时回的是信封」——流本身由 test/J3-sse 覆盖。
+- J4：`listChunks` / `getIndexStatus` / `rebuildIndex` / `getIndexTask` 四条实现，移入已实现清单。
+  `rebuildIndex` 这里刻意发**越界参数**（chunkSize=1）而不是合法参数：只要断言 `code != 50101`，
+  发合法参数会真的建一个建库任务、污染测试库并触发一次 parse。
 """
 
 from __future__ import annotations
@@ -34,10 +37,6 @@ pytestmark = pytest.mark.live
 PENDING_ROUTES = [
     ("login", "POST", "/api/v1/auth/login", {"username": "admin", "password": "x"}),
     ("getProfile", "GET", "/api/v1/auth/profile", None),
-    ("listChunks", "GET", "/api/v1/chunks", None),
-    ("getIndexStatus", "GET", "/api/v1/index/status", None),
-    ("rebuildIndex", "POST", "/api/v1/index/rebuild", {"chunkSize": 300, "overlap": 50}),
-    ("getIndexTask", "GET", "/api/v1/index/tasks/1", None),
     ("listEvalQuestions", "GET", "/api/v1/eval/questions", None),
     ("startEvalBatch", "POST", "/api/v1/eval/batch", {"mode": "both", "k": 3}),
     ("listEvalRuns", "GET", "/api/v1/eval/runs", None),
@@ -51,7 +50,7 @@ PENDING_ROUTES = [
     ("getExperimentReport", "GET", "/api/v1/eval/experiments/1/report", None),
 ]
 
-# J2 / J3 已实现的 9 条：只验信封形状，具体行为由 test/J2-crud、test/J3-sse 覆盖。
+# J2 / J3 / J4 已实现的 13 条：只验信封形状，具体行为由各自的用例覆盖。
 IMPLEMENTED_ROUTES = [
     ("listConversations", "GET", "/api/v1/conversations", None),
     ("createConversation", "POST", "/api/v1/conversations", {"title": "信封形状校验"}),
@@ -62,6 +61,11 @@ IMPLEMENTED_ROUTES = [
     ("updateDocument", "PUT", "/api/v1/documents/999999", {"title": "t"}),
     ("deleteDocument", "DELETE", "/api/v1/documents/999999", None),
     ("getMessageTrace", "GET", "/api/v1/messages/999999/trace", None),
+    ("listChunks", "GET", "/api/v1/chunks", None),
+    ("getIndexStatus", "GET", "/api/v1/index/status", None),
+    # 越界参数：真的建库会污染测试库，这里只要证明「不再是 50101」即可。
+    ("rebuildIndex", "POST", "/api/v1/index/rebuild", {"chunkSize": 1, "overlap": 0}),
+    ("getIndexTask", "GET", "/api/v1/index/tasks/999999", None),
 ]
 
 # 需要 multipart 单独处理的上传接口，不放进 ROUTES 的 JSON 遍历。
