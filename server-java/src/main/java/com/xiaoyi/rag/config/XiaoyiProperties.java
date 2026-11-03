@@ -82,6 +82,8 @@ public class XiaoyiProperties {
         private String internalToken = "dev-internal-token";
         private int connectTimeoutMs = 5000;
         private int readTimeoutMs = 60000;
+        private int ingestSubmitTimeoutMs = 10000;
+        private int statusTimeoutMs = 5000;
         private boolean mock = true;
 
         /**
@@ -122,6 +124,22 @@ public class XiaoyiProperties {
 
         public void setReadTimeoutMs(int readTimeoutMs) {
             this.readTimeoutMs = readTimeoutMs;
+        }
+
+        public int getIngestSubmitTimeoutMs() {
+            return ingestSubmitTimeoutMs;
+        }
+
+        public void setIngestSubmitTimeoutMs(int ingestSubmitTimeoutMs) {
+            this.ingestSubmitTimeoutMs = ingestSubmitTimeoutMs;
+        }
+
+        public int getStatusTimeoutMs() {
+            return statusTimeoutMs;
+        }
+
+        public void setStatusTimeoutMs(int statusTimeoutMs) {
+            this.statusTimeoutMs = statusTimeoutMs;
         }
 
         public boolean isMock() {

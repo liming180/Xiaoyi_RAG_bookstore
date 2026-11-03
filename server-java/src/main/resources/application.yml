@@ -8,7 +8,7 @@ spring:
   datasource:
     # 口令只从环境变量读，绝不写进仓库：MYSQL_PASSWORD 是本机用户级变量
     # （见 README「关键约定」第 1 条）。换机器时 export 同名变量即可，不用改本文件。
-    url: jdbc:mysql://127.0.0.1:3306/xiaoyi_rag?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:xiaoyi_rag}?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -82,9 +82,11 @@ xiaoyi:
     # J1 阶段走 MockAiClient，不真连 Python
     base-url: ${AI_SERVICE_URL:http://127.0.0.1:8000}
     internal-token: ${INTERNAL_TOKEN:dev-internal-token}
-    connect-timeout-ms: 5000
-    read-timeout-ms: 60000
-    mock: true
+    connect-timeout-ms: ${AI_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${AI_READ_TIMEOUT_MS:60000}
+    ingest-submit-timeout-ms: ${AI_INGEST_SUBMIT_TIMEOUT_MS:10000}
+    status-timeout-ms: ${AI_STATUS_TIMEOUT_MS:5000}
+    mock: ${AI_MOCK:true}
   storage:
     root: ${STORAGE_ROOT:./storage}
 

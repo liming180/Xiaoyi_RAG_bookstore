@@ -1,11 +1,13 @@
 package com.xiaoyi.rag.client;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.xiaoyi.rag.client.dto.AiChatRequest;
 import com.xiaoyi.rag.client.dto.AiIndexManifest;
 import com.xiaoyi.rag.client.dto.AiIngestTask;
 import com.xiaoyi.rag.client.dto.AiParseRequest;
 import com.xiaoyi.rag.client.dto.AiParseResult;
 import com.xiaoyi.rag.client.dto.AiStreamEvent;
+import java.util.Map;
 
 /**
  * 对 Python AI 服务的出口。
@@ -47,6 +49,26 @@ public interface AiServiceClient {
      * @return manifest；Python 不可达时由调用方合成 {@code unavailable}，本方法直接抛异常
      */
     AiIndexManifest getIndexManifest();
+
+    /** J6 纯检索调用，供片段浏览与追踪扩展使用。 */
+    default JsonNode retrieve(Map<String, Object> request) {
+        throw new UnsupportedOperationException("retrieve is available in J6 real client");
+    }
+
+    /** J6 批量评测调用。 */
+    default JsonNode evalBatch(Map<String, Object> request) {
+        throw new UnsupportedOperationException("evalBatch is available in J6 real client");
+    }
+
+    /** J6 单资料状态查询。 */
+    default JsonNode getDocumentStatus(String documentId) {
+        throw new UnsupportedOperationException("getDocumentStatus is available in J6 real client");
+    }
+
+    /** J6 AI 健康检查。 */
+    default JsonNode health() {
+        throw new UnsupportedOperationException("health is available in J6 real client");
+    }
 
     /** 事件回调。 */
     interface StreamListener {
