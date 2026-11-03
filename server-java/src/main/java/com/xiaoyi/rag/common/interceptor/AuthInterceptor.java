@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -31,9 +33,19 @@ public class AuthInterceptor implements HandlerInterceptor {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final ObjectMapper objectMapper;
+    private final ConcurrentMap<String, Long> demoTokens = new ConcurrentHashMap<>();
+
+    /** 注册演示 token；后续切换 JWT 时由 token 校验器替换。 */
+    public void registerDemoToken(String token, Long userId) {
+        if (token != null && !token.isBlank() && userId != null) {
+            demoTokens.put(token, userId);
+        }
+    }
 
     public AuthInterceptor(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        // 黑盒门禁和本地开发客户端使用固定演示 token；正式 token 由 login 动态注册。
+        demoTokens.put("dev-token", 1L);
     }
 
     @Override
@@ -50,7 +62,13 @@ public class AuthInterceptor implements HandlerInterceptor {
             writeUnauthorized(response);
             return false;
         }
-        request.setAttribute(ATTR_USER_ID, 1L);
+        String token = header.substring(BEARER_PREFIX.length()).trim();
+        Long userId = demoTokens.get(token);
+        if (userId == null) {
+            writeUnauthorized(response);
+            return false;
+        }
+        request.setAttribute(ATTR_USER_ID, userId);
         return true;
     }
 

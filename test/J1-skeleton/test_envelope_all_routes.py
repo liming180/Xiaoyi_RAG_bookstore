@@ -34,13 +34,12 @@ pytestmark = pytest.mark.live
 
 # operationId -> (method, path, body)
 # body 为 None 表示不带请求体；有 body 的都发合法 JSON，好让请求真正进到 Controller 里。
-PENDING_ROUTES = [
+PENDING_ROUTES = []
+
+# J2–J5 以及演示模式鉴权已实现的 26 条：只验信封形状，具体行为由各自的用例覆盖。
+IMPLEMENTED_ROUTES = [
     ("login", "POST", "/api/v1/auth/login", {"username": "admin", "password": "x"}),
     ("getProfile", "GET", "/api/v1/auth/profile", None),
-]
-
-# J2–J5 已实现的 24 条：只验信封形状，具体行为由各自的用例覆盖。
-IMPLEMENTED_ROUTES = [
     # J5 已实现；提交端点使用非法参数避免在信封检查中启动异步任务。
     ("listEvalQuestions", "GET", "/api/v1/eval/questions", None),
     ("startEvalBatch", "POST", "/api/v1/eval/batch", {"questionIds": [], "mode": "both", "k": 0}),
@@ -108,7 +107,7 @@ def test_route_table_covers_all_28():
     "operation_id,method,path,body", PENDING_ROUTES, ids=[r[0] for r in PENDING_ROUTES]
 )
 def test_unimplemented_route_returns_envelope_50101(java_client, operation_id, method, path, body):
-    """未实现路由：HTTP 501 + code 50101 + 完整信封。"""
+    """保留给未来未实现路由的标准信封断言。"""
     resp = _call(java_client, method, path, body)
     payload = resp.json()
     _assert_envelope(payload, f"{method} {path}")
