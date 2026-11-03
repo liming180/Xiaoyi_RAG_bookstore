@@ -359,6 +359,10 @@ def clean_db():
         return
 
     tables: Iterable[str] = (
+        "eval_candidate",
+        "feedback",
+        "experiment_run",
+        "experiment",
         "message",
         "conversation",
         "chunk",
@@ -412,3 +416,58 @@ def assert_envelope(body: Any) -> dict:
     assert isinstance(body["message"], str), f"message 不是字符串：{body!r}"
     assert isinstance(body["timestamp"], int), f"timestamp 不是整数：{body!r}"
     return body
+
+
+"""J5 helpers: use HTTP for acceptance, DB only for persistence assertions."""
+import json
+import pytest
+
+
+
+@pytest.fixture
+def api(java_client):
+    def call(method, path, **kwargs):
+        response = java_client.request(method, '/api/v1' + path, **kwargs)
+        assert response.status_code == 200, response.text
+        body = assert_envelope(response.json())
+        assert body['code'] == 0, body
+        return body['data']
+    return call
+
+
+@pytest.fixture
+def assistant(api, sse_stream):
+    created = []
+    def make(question='普通图书最多同时借阅几本借多久？'):
+        conv = api('POST', '/conversations', json={'title': 'J5 feedback'})
+        created.append(conv['id'])
+        events = sse_stream({'conversationId': str(conv['id']), 'question': question, 'mode': 'rag', 'k': 3})
+        done = next(json.loads(e.data) for e in events if e.event == 'done')
+        return str(done['messageId'])
+    yield make
+    for cid in created:
+        api('DELETE', f'/conversations/{cid}')
+
+
+@pytest.fixture
+def finished_run(api):
+    def poll(run_id):
+        def read():
+            data = api('GET', f'/eval/runs/{run_id}')
+            return data if data['status'] in ('SUCCEEDED', 'FAILED') else None
+        result = wait_until(read, timeout=60)
+        assert result['status'] == 'SUCCEEDED', result
+        return result
+    return poll
+
+
+@pytest.fixture
+def finished_experiment(api):
+    def poll(eid):
+        def read():
+            data = api('GET', f'/eval/experiments/{eid}')
+            return data if data['status'] in ('SUCCEEDED', 'FAILED') else None
+        result = wait_until(read, timeout=90)
+        assert result['status'] == 'SUCCEEDED', result
+        return result
+    return poll

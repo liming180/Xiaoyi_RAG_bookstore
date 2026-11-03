@@ -83,7 +83,7 @@ def build_cmd(profile: str | None, port: str, db_port: str, db_name: str) -> lis
         "&characterEncoding=utf8&allowPublicKeyRetrieval=true"
     )
     cmd = [
-        "java",
+        os.getenv("JAVA_EXE", "java"),
         f"-Dspring.datasource.url={url}",
         f"-Dspring.datasource.username={env_or_user_registry('MYSQL_USER', 'root')}",
         f"-Dspring.datasource.password={env_or_user_registry('MYSQL_PASSWORD')}",
@@ -135,7 +135,8 @@ def main() -> int:
         args.db_port,
         args.db_name,
     )
-    print(f"[serve_java] {' '.join(cmd)}")
+    display_cmd = ['-Dspring.datasource.password=***' if arg.startswith('-Dspring.datasource.password=') else arg for arg in cmd]
+    print(f"[serve_java] {' '.join(display_cmd)}")
 
     with open(log_path, "ab") as log:
         proc = subprocess.Popen(

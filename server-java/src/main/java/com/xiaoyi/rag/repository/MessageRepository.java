@@ -1,10 +1,12 @@
 package com.xiaoyi.rag.repository;
 
 import com.xiaoyi.rag.model.entity.Message;
+import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -31,6 +33,15 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
             Long conversationId, Pageable pageable);
 
     Optional<Message> findByIdAndDeletedFalse(Long id);
+
+    /** 串行处理同一消息的反馈，避免并发请求创建重复反馈或候选。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select m from Message m where m.id = :id and m.deleted = false")
+    Optional<Message> findAliveByIdForUpdate(@Param("id") Long id);
+
+    /** 消息 ID 是问答落库顺序；同秒多轮也能找到该回答之前最近的用户提问。 */
+    Optional<Message> findFirstByConversationIdAndRoleAndDeletedFalseAndIdLessThanOrderByIdDesc(
+            Long conversationId, String role, Long id);
 
     /** 会话内消息总数（未删除）。 */
     long countByConversationIdAndDeletedFalse(Long conversationId);

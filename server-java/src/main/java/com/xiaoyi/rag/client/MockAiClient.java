@@ -160,6 +160,11 @@ public class MockAiClient implements AiServiceClient {
         String messageId = "m-" + sequence.incrementAndGet();
         List<AiCitation> citations = pickCitations(topK);
 
+        // 参数实验不模拟人的逐字阅读延迟，仍完整异步发出所有协议事件。
+        long stepDelay =
+                request != null && request.options() != null && !request.options().isEmpty()
+                        ? 1L
+                        : STEP_MS;
         List<Runnable> script = new ArrayList<>();
         script.add(() -> listener.onEvent(AiStreamEvent.status("rewriting")));
         script.add(() -> listener.onEvent(AiStreamEvent.status("retrieving")));
@@ -168,7 +173,8 @@ public class MockAiClient implements AiServiceClient {
             script.add(() -> listener.onEvent(AiStreamEvent.retrieval(citations)));
         }
         script.add(() -> listener.onEvent(AiStreamEvent.status("generating")));
-        for (String token : TOKENS) {
+        List<String> answerTokens = mockAnswer(request, mode);
+        for (String token : answerTokens) {
             script.add(() -> listener.onEvent(AiStreamEvent.token(token)));
         }
         script.add(
@@ -180,7 +186,7 @@ public class MockAiClient implements AiServiceClient {
                             AiStreamEvent.done(
                                     messageId,
                                     usage,
-                                    STEP_MS * script.size(),
+                                    stepDelay * script.size(),
                                     false,
                                     SUGGESTIONS,
                                     "both".equals(mode) ? "m-direct-" + sequence.get() : null,
@@ -191,8 +197,50 @@ public class MockAiClient implements AiServiceClient {
         long delay = FIRST_DELAY_MS;
         for (Runnable step : script) {
             scheduler.schedule(step, delay, TimeUnit.MILLISECONDS);
-            delay += STEP_MS;
+            delay += stepDelay;
         }
+    }
+
+    /** 确定性联调答案；仅 mock provider 使用，不承担真实检索或生成逻辑。 */
+    private List<String> mockAnswer(AiChatRequest request, String mode) {
+        if ("direct".equals(mode)) {
+            return List.of("（直答）读书会通常安排在周末，具体规则请向管理员确认。");
+        }
+        String question = request == null || request.question() == null ? "" : request.question();
+        if (question.contains("费用") || question.contains("联系电话")) {
+            return List.of("资料未提供该信息。");
+        }
+        if (question.contains("老成员")) {
+            return List.of("不是，登记成员最多借4本普通图书，成员留言不构成正式规则。");
+        }
+        if (question.contains("2026年11月14日")) {
+            return List.of("那一周调整为周日15:00开始，地点改为一层多功能厅。");
+        }
+        if (question.contains("期刊")) {
+            return List.of("期刊最多同时借2本，借期7天。");
+        }
+        if (question.contains("截止时间") && question.contains("天数")) {
+            return List.of("读书会报名截止周五18:00，空间预约可提前2天。");
+        }
+        if (question.contains("几点结束")) {
+            return List.of("活动16:00结束，普通图书最多同时借4本。");
+        }
+        if (question.contains("取消")) {
+            return List.of("至少提前30分钟取消预约。");
+        }
+        if (question.contains("讨论空间")) {
+            return List.of("讨论空间需3至6人，每次最长2小时。");
+        }
+        if (question.contains("续借")) {
+            return List.of("已经被别人预约的图书不能续借。");
+        }
+        if (question.contains("普通图书")) {
+            return List.of("每人最多借4本普通图书，借期21天。");
+        }
+        if (question.contains("报名")) {
+            return List.of("报名应于活动前一日周五18:00前完成。");
+        }
+        return TOKENS;
     }
 
     @Override

@@ -81,6 +81,10 @@
   </dependencies>
 
   <build>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>../assets/eval</directory><targetPath>eval</targetPath><includes><include>*.csv</include></includes></resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>

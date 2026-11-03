@@ -37,21 +37,22 @@ pytestmark = pytest.mark.live
 PENDING_ROUTES = [
     ("login", "POST", "/api/v1/auth/login", {"username": "admin", "password": "x"}),
     ("getProfile", "GET", "/api/v1/auth/profile", None),
-    ("listEvalQuestions", "GET", "/api/v1/eval/questions", None),
-    ("startEvalBatch", "POST", "/api/v1/eval/batch", {"mode": "both", "k": 3}),
-    ("listEvalRuns", "GET", "/api/v1/eval/runs", None),
-    ("getEvalRun", "GET", "/api/v1/eval/runs/1", None),
-    ("submitFeedback", "POST", "/api/v1/messages/1/feedback", {"rating": "up"}),
-    ("getFeedbackSummary", "GET", "/api/v1/feedback/summary", None),
-    ("listEvalCandidates", "GET", "/api/v1/eval/candidates", None),
-    ("decideEvalCandidate", "POST", "/api/v1/eval/candidates/1/decision", {"status": "accepted"}),
-    ("createExperiment", "POST", "/api/v1/eval/experiments", {"name": "e"}),
-    ("getExperiment", "GET", "/api/v1/eval/experiments/1", None),
-    ("getExperimentReport", "GET", "/api/v1/eval/experiments/1/report", None),
 ]
 
-# J2 / J3 / J4 已实现的 13 条：只验信封形状，具体行为由各自的用例覆盖。
+# J2–J5 已实现的 24 条：只验信封形状，具体行为由各自的用例覆盖。
 IMPLEMENTED_ROUTES = [
+    # J5 已实现；提交端点使用非法参数避免在信封检查中启动异步任务。
+    ("listEvalQuestions", "GET", "/api/v1/eval/questions", None),
+    ("startEvalBatch", "POST", "/api/v1/eval/batch", {"questionIds": [], "mode": "both", "k": 0}),
+    ("listEvalRuns", "GET", "/api/v1/eval/runs", None),
+    ("getEvalRun", "GET", "/api/v1/eval/runs/999999", None),
+    ("submitFeedback", "POST", "/api/v1/messages/999999/feedback", {"rating": "up"}),
+    ("getFeedbackSummary", "GET", "/api/v1/feedback/summary", None),
+    ("listEvalCandidates", "GET", "/api/v1/eval/candidates", None),
+    ("decideEvalCandidate", "POST", "/api/v1/eval/candidates/999999/decision", {"status": "accepted"}),
+    ("createExperiment", "POST", "/api/v1/eval/experiments", {"name": "e"}),
+    ("getExperiment", "GET", "/api/v1/eval/experiments/999999", None),
+    ("getExperimentReport", "GET", "/api/v1/eval/experiments/999999/report", None),
     ("listConversations", "GET", "/api/v1/conversations", None),
     ("createConversation", "POST", "/api/v1/conversations", {"title": "信封形状校验"}),
     ("deleteConversation", "DELETE", "/api/v1/conversations/999999", None),

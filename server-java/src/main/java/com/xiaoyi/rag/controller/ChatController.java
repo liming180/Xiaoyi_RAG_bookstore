@@ -11,6 +11,7 @@ import com.xiaoyi.rag.model.dto.ChatRequest;
 import com.xiaoyi.rag.model.vo.RetrievalTraceVO;
 import com.xiaoyi.rag.service.ChatService;
 import com.xiaoyi.rag.service.ChatStreamFrame;
+import com.xiaoyi.rag.service.ExperimentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -61,9 +62,15 @@ public class ChatController {
 
     private final ObjectMapper objectMapper;
 
-    public ChatController(ChatService chatService, ObjectMapper objectMapper) {
+    private final ExperimentService experimentService;
+
+    public ChatController(
+            ChatService chatService,
+            ObjectMapper objectMapper,
+            ExperimentService experimentService) {
         this.chatService = chatService;
         this.objectMapper = objectMapper;
+        this.experimentService = experimentService;
     }
 
     /**
@@ -78,6 +85,7 @@ public class ChatController {
     public SseEmitter chatStream(
             @Valid @RequestBody(required = false) ChatRequest request,
             @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        experimentService.assertChatAvailable();
         // 所有可能失败的校验都在建 emitter 之前完成，失败时 GlobalExceptionHandler 能正常回信封。
         ChatContext context =
                 chatService.prepare(
