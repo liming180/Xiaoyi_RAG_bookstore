@@ -23,7 +23,10 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=30
     env:
       INTERNAL_TOKEN: ci-internal-token-0123456789
-      AUTH_JWT_SECRET: ci-jwt-secret-0123456789abcdef
+      # 必须 >= 32 UTF-8 字节：TokenService.java:28 会校验并抛
+      # IllegalStateException("AUTH_JWT_SECRET must contain at least 32 UTF-8 bytes")，
+      # 短一个字节整个 Java 进程起不来（CI 表现为第 11 步失败、后面全 skip）。
+      AUTH_JWT_SECRET: ci-jwt-secret-0123456789abcdef-0123456789
       # 变量名必须与 application.yml 完全一致：secondary 是 AUTH_SECONDARY_BOOTSTRAP_*，
       # 写成 AUTH_BOOTSTRAP_SECONDARY_* 会被静默忽略，B 账号永远建不出来。
       AUTH_BOOTSTRAP_USERNAME: gate-a
