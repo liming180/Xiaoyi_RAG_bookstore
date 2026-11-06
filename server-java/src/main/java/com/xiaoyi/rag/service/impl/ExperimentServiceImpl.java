@@ -2,6 +2,7 @@ package com.xiaoyi.rag.service.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xiaoyi.rag.common.enums.ErrorCode;
 import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.entity.Experiment;
@@ -47,6 +48,11 @@ public class ExperimentServiceImpl implements ExperimentService {
         this.transactions = new TransactionTemplate(manager);
     }
 
+    /**
+     * 启动时崩溃恢复：跨全部用户扫描非终态实验。
+     *
+     * <p>重启时没有请求上下文，残留的 PENDING/RUNNING 行无论属于谁都已经没有执行线程，必须统一置 FAILED， 否则进度条永远停在半路。
+     */
     @PostConstruct
     public void recoverInterrupted() {
         transactions.executeWithoutResult(
@@ -62,19 +68,27 @@ public class ExperimentServiceImpl implements ExperimentService {
     }
 
     @Override
-    public synchronized ExperimentVO create(CreateExperimentRequest request) {
-        if (running.get()) throw new ApiException(40902, "已有实验在执行");
-        if (request == null || request.axes() == null) throw new ApiException(40001, "实验参数非法");
+    public synchronized ExperimentVO create(Long userId, CreateExperimentRequest request) {
+        if (running.get())
+            throw new ApiException(
+                    ErrorCode.EXPERIMENT_ALREADY_RUNNING.getCode(),
+                    ErrorCode.EXPERIMENT_ALREADY_RUNNING.getDefaultMessage());
+        if (request == null || request.axes() == null)
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "实验参数非法");
         if (request.name() != null && request.name().length() > 255)
-            throw new ApiException(40001, "实验名称过长");
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "实验名称过长");
         List<Map<String, Object>> groups = groups(request.axes());
-        if (groups.isEmpty()) throw new ApiException(40004, "参数矩阵为空");
+        if (groups.isEmpty())
+            throw new ApiException(
+                    ErrorCode.EMPTY_PARAM_MATRIX.getCode(),
+                    ErrorCode.EMPTY_PARAM_MATRIX.getDefaultMessage());
         running.set(true);
         try {
             Experiment experiment =
                     transactions.execute(
                             status -> {
                                 Experiment row = new Experiment();
+                                row.setUserId(userId);
                                 row.setName(
                                         request.name() == null || request.name().isBlank()
                                                 ? "参数实验"
@@ -88,7 +102,9 @@ public class ExperimentServiceImpl implements ExperimentService {
                                 return experiments.saveAndFlush(row);
                             });
             ExperimentVO initial = toVO(experiment);
-            Thread.startVirtualThread(() -> execute(experiment.getId(), groups));
+            Long id = experiment.getId();
+            Long owner = userId;
+            Thread.startVirtualThread(() -> execute(owner, id, groups));
             return initial;
         } catch (RuntimeException | Error error) {
             running.set(false);
@@ -96,7 +112,7 @@ public class ExperimentServiceImpl implements ExperimentService {
         }
     }
 
-    private void execute(Long id, List<Map<String, Object>> groups) {
+    private void execute(Long userId, Long id, List<Map<String, Object>> groups) {
         try {
             var questions = evaluations.questions();
             if (questions.isEmpty()) throw new IllegalStateException("评测题集为空");
@@ -106,7 +122,7 @@ public class ExperimentServiceImpl implements ExperimentService {
                 Map<String, Object> params = groups.get(index);
                 long start = System.nanoTime();
                 List<EvalCaseResultVO> cases =
-                        evaluations.evaluate(questions, (Integer) params.get("k"), params);
+                        evaluations.evaluate(userId, questions, (Integer) params.get("k"), params);
                 if (cases.size() != questions.size()) throw new IllegalStateException("评测结果数量不完整");
                 long elapsed = Math.max(0, (System.nanoTime() - start) / 1_000_000);
                 long passed = cases.stream().filter(EvalCaseResultVO::ragPassed).count();
@@ -140,15 +156,16 @@ public class ExperimentServiceImpl implements ExperimentService {
                             run.setMetricsJson(json(metrics));
                             run.setElapsedMs(elapsed);
                             runs.save(run);
-                            Experiment experiment = require(id);
+                            Experiment experiment = require(userId, id);
                             experiment.setFinishedGroups(groupIndex + 1);
                             experiment.setProgress((groupIndex + 1) * 100 / groups.size());
                             experiments.save(experiment);
                         });
             }
-            finish(id, "SUCCEEDED", null);
+            finish(userId, id, "SUCCEEDED", null);
         } catch (Throwable error) {
             finish(
+                    userId,
                     id,
                     "FAILED",
                     error.getMessage() == null
@@ -159,10 +176,10 @@ public class ExperimentServiceImpl implements ExperimentService {
         }
     }
 
-    private void finish(Long id, String state, String error) {
+    private void finish(Long userId, Long id, String state, String error) {
         transactions.executeWithoutResult(
                 status -> {
-                    Experiment experiment = require(id);
+                    Experiment experiment = require(userId, id);
                     experiment.setStatus(state);
                     experiment.setError(error);
                     experiment.setFinishedAt(now());
@@ -176,18 +193,21 @@ public class ExperimentServiceImpl implements ExperimentService {
                 || axes.overlap() == null
                 || axes.k() == null
                 || axes.rerank() == null
-                || axes.summary() == null) throw new ApiException(40001, "实验参数轴缺失");
+                || axes.summary() == null)
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "实验参数轴缺失");
         for (Integer value : axes.chunkSize())
             if (value == null || value < 50 || value > 1000)
-                throw new ApiException(40001, "chunkSize 需在 50-1000 之间");
+                throw new ApiException(
+                        ErrorCode.INVALID_CHUNK_SIZE.getCode(), "chunkSize 需在 50-1000 之间");
         for (Integer value : axes.overlap())
-            if (value == null || value < 0) throw new ApiException(40001, "overlap 必须非负");
+            if (value == null || value < 0)
+                throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "overlap 必须非负");
         for (Integer value : axes.k())
             if (value == null || value < 1 || value > 10)
-                throw new ApiException(40001, "k 需在 1-10 之间");
+                throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "k 需在 1-10 之间");
         if (axes.rerank().stream().anyMatch(v -> v == null)
                 || axes.summary().stream().anyMatch(v -> v == null))
-            throw new ApiException(40001, "布尔轴包含空值");
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "布尔轴包含空值");
         List<Map<String, Object>> result = new ArrayList<>();
         for (Integer chunk : axes.chunkSize())
             for (Integer overlap : axes.overlap()) {
@@ -196,7 +216,8 @@ public class ExperimentServiceImpl implements ExperimentService {
                     for (Boolean rerank : axes.rerank())
                         for (Boolean summary : axes.summary()) {
                             if (result.size() >= 4096)
-                                throw new ApiException(40001, "参数矩阵最多 4096 组");
+                                throw new ApiException(
+                                        ErrorCode.INVALID_PARAM.getCode(), "参数矩阵最多 4096 组");
                             Map<String, Object> params = new LinkedHashMap<>();
                             params.put("chunkSize", chunk);
                             params.put("overlap", overlap);
@@ -210,13 +231,13 @@ public class ExperimentServiceImpl implements ExperimentService {
     }
 
     @Override
-    public ExperimentVO get(String id) {
-        return toVO(require(parseId(id)));
+    public ExperimentVO get(Long userId, String id) {
+        return toVO(require(userId, parseId(id)));
     }
 
     @Override
-    public ExperimentReportVO report(String id) {
-        Experiment experiment = require(parseId(id));
+    public ExperimentReportVO report(Long userId, String id) {
+        Experiment experiment = require(userId, parseId(id));
         List<ExperimentReportVO.Run> report =
                 runs.findByExperimentIdOrderByGroupIndexAsc(experiment.getId()).stream()
                         .map(
@@ -237,11 +258,25 @@ public class ExperimentServiceImpl implements ExperimentService {
 
     @Override
     public void assertChatAvailable() {
-        if (running.get()) throw new ApiException(40901, "实验进行中，提问暂不可用");
+        if (running.get())
+            throw new ApiException(
+                    ErrorCode.EXPERIMENT_BUSY.getCode(),
+                    ErrorCode.EXPERIMENT_BUSY.getDefaultMessage());
     }
 
-    private Experiment require(Long id) {
-        return experiments.findById(id).orElseThrow(() -> new ApiException(40405, "实验不存在"));
+    /**
+     * 按 id + 归属用户取实验。
+     *
+     * <p>别人的实验与不存在的 id 走同一个 40405 分支，避免用状态码枚举出别人的 id。
+     */
+    private Experiment require(Long userId, Long id) {
+        return experiments
+                .findByIdAndUserId(id, userId)
+                .orElseThrow(
+                        () ->
+                                new ApiException(
+                                        ErrorCode.EXPERIMENT_NOT_FOUND.getCode(),
+                                        ErrorCode.EXPERIMENT_NOT_FOUND.getDefaultMessage()));
     }
 
     private Long parseId(String id) {
@@ -249,8 +284,11 @@ public class ExperimentServiceImpl implements ExperimentService {
             long value = Long.parseLong(id);
             if (value > 0) return value;
         } catch (NumberFormatException ignored) {
+            // 契约 ID 是字符串；格式不符也按资源不存在处理。
         }
-        throw new ApiException(40405, "实验不存在");
+        throw new ApiException(
+                ErrorCode.EXPERIMENT_NOT_FOUND.getCode(),
+                ErrorCode.EXPERIMENT_NOT_FOUND.getDefaultMessage());
     }
 
     private ExperimentVO toVO(Experiment row) {

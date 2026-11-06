@@ -1,5 +1,8 @@
 package com.xiaoyi.rag.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaoyi.rag.client.AiServiceClient;
 import com.xiaoyi.rag.client.dto.AiChunk;
 import com.xiaoyi.rag.client.dto.AiIndexManifest;
@@ -29,29 +32,36 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 建库编排实现。
  *
- * <p>三个关键决策：
+ * <p>四个关键决策：
  *
  * <ul>
  *   <li><b>触发 parse 放在 rebuild 里同步做，而不是丢给轮询器。</b> 契约 {@code /api/v1/index/rebuild} 的 {@code
  *       x-error-codes} 明确包含 {@code 50301}——如果触发只发生在后台轮询里，这条路由永远回不出 50301， 前端就无法在「点重建」的当下告诉用户 Python
  *       挂了。 轮询器里保留同一条触发路径，纯粹用于崩溃自愈（任务已落库但 externalTaskId 还没写上）。
- *   <li><b>片段缓存整表以最后一次成功建库为准。</b> 成功后先删掉旧任务的全部片段再写入，避免两代产物混在一起 —— 这正是 {@code /index/status} 的
- *       needs_rebuild 语义所依赖的「当前缓存 == 最近一次成功」不变量。
+ *   <li><b>片段缓存按用户整代替换。</b> 成功后先删掉<b>本人</b>其他任务的全部片段再写入，避免两代产物混在一起 —— 这正是 {@code /index/status} 的
+ *       needs_rebuild 语义所依赖的「当前缓存 == 最近一次成功」不变量。删除范围带 {@code user_id}， 否则一个用户建库会清空所有人的片段。
  *   <li><b>status 优先从本地库推导，Python 只用来判可用性。</b> docCount / chunkCount / 参数都取自本地，重启后仍准确； 若全部依赖
  *       Python， 它的任务表一丢，页面上的统计就归零了。
+ *   <li><b>快照 + revision 决定「这次建库算不算数」。</b> 建库开始时把每份资料的 {@code (id, revision)} 存进 {@code
+ *       index_task.snapshot_json}，收尾时逐份用 {@code where revision = :snapshot} 原子落库：
+ *       建库期间用户改了标题/标签/正文，revision 已变，那条 update 影响 0 行，片段不覆盖、状态不翻转。这就是
+ *       H3「建库期间新上传资料仍为待建、失败不破坏上一代」的实现点。
  * </ul>
  */
 @Service
@@ -97,30 +107,36 @@ public class IndexServiceImpl implements IndexService {
 
     private final XiaoyiProperties properties;
 
+    private final ObjectMapper objectMapper;
+
     public IndexServiceImpl(
             IndexTaskRepository indexTaskRepository,
             DocumentRepository documentRepository,
             ChunkRepository chunkRepository,
             AiServiceClient aiClient,
             Storage storage,
-            XiaoyiProperties properties) {
+            XiaoyiProperties properties,
+            ObjectMapper objectMapper) {
         this.indexTaskRepository = indexTaskRepository;
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.aiClient = aiClient;
         this.storage = storage;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     /* ------------------------------------------------------------ 状态 */
 
     @Override
     @Transactional(readOnly = true)
-    public IndexStatusVO status() {
-        List<Document> docs = documentRepository.findByDeletedFalseOrderByUpdatedAtDescIdDesc();
+    public IndexStatusVO status(Long userId) {
+        List<Document> docs =
+                documentRepository.findByUploadedByAndDeletedFalseOrderByUpdatedAtDescIdDesc(
+                        userId);
         Optional<IndexTask> lastOk =
-                indexTaskRepository.findFirstByStatusOrderByFinishedAtDescIdDesc(
-                        IndexTask.STATUS_SUCCEEDED);
+                indexTaskRepository.findFirstByUserIdAndStatusOrderByFinishedAtDescIdDesc(
+                        userId, IndexTask.STATUS_SUCCEEDED);
 
         int chunkSize =
                 lastOk.map(IndexTask::getChunkSize)
@@ -133,12 +149,12 @@ public class IndexServiceImpl implements IndexService {
                         .orElse(properties.getIndex().getEmbeddingModel());
         Long lastBuiltAt = lastOk.map(IndexTask::getFinishedAt).orElse(null);
         int docCount = docs.size();
-        int chunkCount = (int) chunkRepository.count();
+        int chunkCount = (int) chunkRepository.countByUserId(userId);
 
         // Python 是否活着只影响 status 取值，不影响本次响应能否成功（unavailable 也是 HTTP 200）。
         AiIndexManifest manifest;
         try {
-            manifest = aiClient.getIndexManifest();
+            manifest = aiClient.getIndexManifest(userId);
         } catch (RuntimeException ex) {
             log.warn(
                     "查询 AI 索引状态失败，合成 unavailable：{} - {}",
@@ -217,7 +233,7 @@ public class IndexServiceImpl implements IndexService {
 
     @Override
     @Transactional
-    public IndexTaskVO rebuild(RebuildRequest request) {
+    public IndexTaskVO rebuild(Long userId, RebuildRequest request) {
         int chunkSize =
                 request == null || request.chunkSize() == null
                         ? properties.getIndex().getDefaultChunkSize()
@@ -228,18 +244,23 @@ public class IndexServiceImpl implements IndexService {
                         : request.overlap();
         validate(chunkSize, overlap);
 
-        // 建库串行：已有在跑的任务就直接 409，别让两次重建互相覆盖片段缓存。
+        // 建库串行（按用户）：已有在跑的任务就直接 409，别让两次重建互相覆盖片段缓存。
         List<IndexTask> running =
-                indexTaskRepository.findByStatusInOrderByCreatedAtAsc(
-                        List.of(IndexTask.STATUS_PENDING, IndexTask.STATUS_RUNNING));
+                indexTaskRepository.findByUserIdAndStatusInOrderByCreatedAtDesc(
+                        userId, List.of(IndexTask.STATUS_PENDING, IndexTask.STATUS_RUNNING));
         if (!running.isEmpty()) {
             throw new ApiException(
                     ErrorCode.INDEX_TASK_ALREADY_RUNNING.getCode(),
                     ErrorCode.INDEX_TASK_ALREADY_RUNNING.getDefaultMessage());
         }
 
-        List<Document> docs = indexableDocuments();
+        List<Document> docs = indexableDocuments(userId);
+        long now = Instant.now().getEpochSecond();
         IndexTask task = new IndexTask();
+        task.setUserId(userId);
+        task.setGeneration(UUID.randomUUID().toString());
+        task.setSubmissionKey(UUID.randomUUID().toString());
+        task.setSnapshotJson(snapshotJson(docs));
         task.setStatus(IndexTask.STATUS_PENDING);
         task.setStage(IndexTask.STAGE_PARSING);
         task.setProgress(0);
@@ -249,17 +270,55 @@ public class IndexServiceImpl implements IndexService {
         task.setDocCount(docs.size());
         task.setChunkCount(0);
         task.setPollFailures(0);
-        task.setCreatedAt(Instant.now().getEpochSecond());
-        IndexTask saved = indexTaskRepository.save(task);
+        task.setCreatedAt(now);
+        IndexTask saved;
+        try {
+            saved = indexTaskRepository.saveAndFlush(task);
+        } catch (DataIntegrityViolationException ex) {
+            // uk_index_task_active_user：同一用户同时只允许一个非终态任务。上面的预检查有并发窗口，
+            // 库层唯一键才是最终判据，这里把它翻译成同一个 40903。
+            throw new ApiException(
+                    ErrorCode.INDEX_TASK_ALREADY_RUNNING.getCode(),
+                    ErrorCode.INDEX_TASK_ALREADY_RUNNING.getDefaultMessage());
+        }
+
+        if (docs.isEmpty()) {
+            // 全量重建当前空语料 = 空索引：没有资料可送，Python 的 ParseRequest 要求 documents 至少 1 条，
+            // 硬送会拿到 400 并被翻成 50301。这里直接把任务收成 SUCCEEDED，并清掉本人上一代片段，
+            // 语义与「重建成功但没有内容」一致，也不会在索引清单里留下上一代的残影。
+            finishEmptyRebuild(saved);
+            return toTaskVO(saved);
+        }
 
         triggerParse(saved, docs);
         return toTaskVO(saved);
     }
 
     /**
+     * 空语料重建的收尾：任务直接 SUCCEEDED，片段缓存清空，资料集本来就是空所以无需翻状态。
+     *
+     * @param task 已落库的任务
+     */
+    private void finishEmptyRebuild(IndexTask task) {
+        persistChunks(task, List.of());
+        task.setStatus(IndexTask.STATUS_SUCCEEDED);
+        task.setStage(IndexTask.STAGE_DONE);
+        task.setProgress(100);
+        task.setChunkCount(0);
+        task.setDocCount(0);
+        task.setError(null);
+        task.setFinishedAt(Instant.now().getEpochSecond());
+        indexTaskRepository.save(task);
+        log.info("建库任务 {} 空语料重建完成：已清空本人上一代片段", task.getId());
+    }
+
+    /**
      * 调 Python 触发入库并把 external_task_id 写回任务。
      *
      * <p>失败时任务置 FAILED 并抛 {@code 50301}：重建这个动作在用户视角是「点一下」， 触发都失败就没必要留一个永远 PENDING 的任务让前端轮询到超时。
+     *
+     * <p>{@code submissionKey} 来自任务本身而不是现场生成：触发超时后轮询器会重放同一次提交， Python 侧按 {@code (user_id,
+     * submission_key)} 去重，重试拿到的是同一个 task_id，不会重复切片段。
      *
      * @param task 任务实体（已落库，有 id）
      * @param docs 待入库资料
@@ -285,9 +344,17 @@ public class IndexServiceImpl implements IndexService {
         try {
             accepted =
                     aiClient.parseDocuments(
-                            new AiParseRequest(items, task.getChunkSize(), task.getOverlap()));
+                            task.getUserId(),
+                            new AiParseRequest(
+                                    items,
+                                    task.getChunkSize(),
+                                    task.getOverlap(),
+                                    task.getSubmissionKey(),
+                                    task.getGeneration()));
         } catch (RuntimeException ex) {
-            log.error("触发建库失败：{} - {}", ex.getClass().getSimpleName(), ex.getMessage());
+            // 带上异常本体：只打 getMessage() 时，Connection reset 这类网络失败在日志里
+            // 只剩一句「Python AI request failed」，没有堆栈就分不清是超时、连不上还是对端关连接。
+            log.error("触发建库失败：{} - {}", ex.getClass().getSimpleName(), ex.getMessage(), ex);
             task.setStatus(IndexTask.STATUS_FAILED);
             task.setError(truncate(ex.getMessage()));
             task.setFinishedAt(Instant.now().getEpochSecond());
@@ -312,7 +379,7 @@ public class IndexServiceImpl implements IndexService {
 
     @Override
     @Transactional(readOnly = true)
-    public IndexTaskVO task(String id) {
+    public IndexTaskVO task(Long userId, String id) {
         Long taskId = parseId(id);
         if (taskId == null) {
             throw new ApiException(
@@ -321,7 +388,7 @@ public class IndexServiceImpl implements IndexService {
         }
         IndexTask entity =
                 indexTaskRepository
-                        .findById(taskId)
+                        .findByIdAndUserId(taskId, userId)
                         .orElseThrow(
                                 () ->
                                         new ApiException(
@@ -335,12 +402,12 @@ public class IndexServiceImpl implements IndexService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ChunkItemVO> listChunks(String docId, String q, String kind) {
+    public List<ChunkItemVO> listChunks(Long userId, String docId, String q, String kind) {
         Long docFilter = docId == null || docId.isBlank() ? null : parseId(docId);
         String keyword = q == null || q.isEmpty() ? null : q;
         String kindFilter = kind == null || kind.isBlank() ? null : kind.trim();
 
-        List<Chunk> rows = chunkRepository.findAllByOrderBySeqAscIdAsc();
+        List<Chunk> rows = chunkRepository.findByUserIdOrderBySeqAscIdAsc(userId);
         List<ChunkItemVO> result = new ArrayList<>();
         for (Chunk row : rows) {
             if (docFilter != null && !docFilter.equals(row.getDocId())) {
@@ -379,17 +446,19 @@ public class IndexServiceImpl implements IndexService {
                         List.of(IndexTask.STATUS_PENDING, IndexTask.STATUS_RUNNING));
         for (IndexTask task : running) {
             if (task.getExternalTaskId() == null || task.getExternalTaskId().isBlank()) {
-                // 崩溃自愈：任务已落库但触发没走完，补一次触发。
+                // 崩溃自愈：任务已落库但触发没走完，补一次触发。资料范围取自快照，
+                // 不能用「当前全部可入库资料」——那会把建库期间新上传的资料混进这一代。
                 log.info("任务 {} 缺 external_task_id，补触发", task.getId());
                 try {
-                    triggerParse(task, indexableDocuments());
+                    triggerParse(task, snapshotDocuments(task));
                 } catch (RuntimeException ex) {
                     countFailure(task, ex);
                 }
                 continue;
             }
             try {
-                AiIngestTask info = aiClient.getIngestTask(task.getExternalTaskId());
+                AiIngestTask info =
+                        aiClient.getIngestTask(task.getUserId(), task.getExternalTaskId());
                 apply(task, info);
             } catch (RuntimeException ex) {
                 countFailure(task, ex);
@@ -419,7 +488,8 @@ public class IndexServiceImpl implements IndexService {
             task.setError(truncate(info.error() == null ? "建库失败" : info.error()));
             task.setFinishedAt(Instant.now().getEpochSecond());
             indexTaskRepository.save(task);
-            log.warn("建库任务 {} 失败：{}", task.getId(), task.getError());
+            int marked = documentRepository.markFailedForOwner(task.getUserId(), task.getError());
+            log.warn("建库任务 {} 失败：{}（{} 份资料置 FAILED）", task.getId(), task.getError(), marked);
             return;
         }
         if (IndexTask.STATUS_SUCCEEDED.equals(status)) {
@@ -433,7 +503,7 @@ public class IndexServiceImpl implements IndexService {
                 task.setEmbeddingModel(properties.getIndex().getEmbeddingModel());
             }
             indexTaskRepository.save(task);
-            int promoted = documentRepository.markStaleAsIndexed();
+            int promoted = promoteDocuments(task, info.chunks());
             log.info("建库任务 {} 成功：片段 {} 段，资料 {} 份转为 INDEXED", task.getId(), written, promoted);
             return;
         }
@@ -441,20 +511,21 @@ public class IndexServiceImpl implements IndexService {
     }
 
     /**
-     * 落片段缓存：先清掉上一代产物，再写入本次的。
+     * 落片段缓存：先清掉本人上一代产物，再写入本次的。
+     *
+     * <p>删除条件带 {@code user_id}：片段表是全用户共用的，漏掉这个条件等于每次建库都把别人的知识库清空。
      *
      * @param task 成功任务
      * @param chunks Python 回传的片段
      * @return 实际写入条数
      */
     private int persistChunks(IndexTask task, List<AiChunk> chunks) {
-        chunkRepository.deleteByTaskIdNot(task.getId());
+        chunkRepository.deleteByUserIdAndTaskIdNot(task.getUserId(), task.getId());
         if (chunks == null || chunks.isEmpty()) {
             log.warn("任务 {} 成功但没回传片段，片段缓存保持为空", task.getId());
             return 0;
         }
         List<Chunk> entities = new ArrayList<>(chunks.size());
-        Map<Long, Integer> perDoc = new HashMap<>();
         long now = Instant.now().getEpochSecond();
         int seq = 0;
         for (AiChunk source : chunks) {
@@ -464,6 +535,7 @@ public class IndexServiceImpl implements IndexService {
             }
             Chunk entity = new Chunk();
             entity.setTaskId(task.getId());
+            entity.setUserId(task.getUserId());
             entity.setChunkId(source.chunkId());
             entity.setDocId(docId);
             entity.setDocTitle(source.docTitle() == null ? "" : source.docTitle());
@@ -476,19 +548,55 @@ public class IndexServiceImpl implements IndexService {
             entity.setSeq(seq++);
             entity.setCreatedAt(now);
             entities.add(entity);
-            perDoc.merge(docId, 1, Integer::sum);
         }
         chunkRepository.saveAll(entities);
-        for (Map.Entry<Long, Integer> entry : perDoc.entrySet()) {
-            documentRepository
-                    .findByIdAndDeletedFalse(entry.getKey())
-                    .ifPresent(
-                            doc -> {
-                                doc.setChunkCount(entry.getValue());
-                                documentRepository.save(doc);
-                            });
-        }
         return entities.size();
+    }
+
+    /**
+     * 把快照里「未被改动」的资料原子翻成 INDEXED。
+     *
+     * <p>逐份比对 {@code revision}：建库期间被改过的资料影响 0 行，状态留在 NEEDS_REBUILD，等下一次重建 ——
+     * 这就是「失败/过期不破坏上一代、新上传仍为待建」的落点。
+     *
+     * @param task 成功任务（携带快照）
+     * @param chunks 本次回传片段，用于统计每份资料的片段数
+     * @return 成功翻状态的数量
+     */
+    private int promoteDocuments(IndexTask task, List<AiChunk> chunks) {
+        Map<Long, Long> revisions = snapshotRevisions(task.getSnapshotJson());
+        if (revisions.isEmpty()) {
+            log.warn("任务 {} 缺快照，跳过资料状态翻转", task.getId());
+            return 0;
+        }
+        Map<Long, Integer> perDoc = new HashMap<>();
+        if (chunks != null) {
+            for (AiChunk source : chunks) {
+                Long docId = parseId(source.docId());
+                if (docId != null) {
+                    perDoc.merge(docId, 1, Integer::sum);
+                }
+            }
+        }
+        long now = Instant.now().getEpochSecond();
+        int promoted = 0;
+        for (Map.Entry<Long, Long> entry : revisions.entrySet()) {
+            Long docId = entry.getKey();
+            Integer count = perDoc.get(docId);
+            if (count == null) {
+                // 这份资料没产出片段（正文读不出来 / 已被删除），保持原状态，别假装它入库成功。
+                continue;
+            }
+            int affected =
+                    documentRepository.markSnapshotIndexed(
+                            task.getUserId(), docId, entry.getValue(), count, now);
+            if (affected > 0) {
+                promoted++;
+            } else {
+                log.info("资料 {} 在快照后被改动，保留待建状态", docId);
+            }
+        }
+        return promoted;
     }
 
     /**
@@ -511,6 +619,74 @@ public class IndexServiceImpl implements IndexService {
         indexTaskRepository.save(task);
     }
 
+    /* ------------------------------------------------------------ 快照 */
+
+    /**
+     * 快照序列化：只存 {@code id + revision}，够用来判断「这份资料还是不是当时那一份」。
+     *
+     * @param docs 本次参与建库的资料
+     * @return JSON 数组串
+     */
+    private String snapshotJson(List<Document> docs) {
+        List<Map<String, Object>> rows = new ArrayList<>(docs.size());
+        for (Document doc : docs) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", doc.getId());
+            row.put("revision", doc.getRevision() == null ? 0L : doc.getRevision());
+            rows.add(row);
+        }
+        try {
+            return objectMapper.writeValueAsString(rows);
+        } catch (JsonProcessingException ex) {
+            log.warn("序列化建库快照失败：{}", ex.getMessage());
+            return "[]";
+        }
+    }
+
+    /**
+     * 快照反序列化。
+     *
+     * @param json 快照串
+     * @return 资料 id → 当时的 revision；坏数据返回空表（调用方按「无快照」处理）
+     */
+    private Map<Long, Long> snapshotRevisions(String json) {
+        Map<Long, Long> result = new LinkedHashMap<>();
+        if (json == null || json.isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            if (root == null || !root.isArray()) {
+                return result;
+            }
+            for (JsonNode node : root) {
+                long id = node.path("id").asLong(0L);
+                if (id > 0) {
+                    result.put(id, node.path("revision").asLong(0L));
+                }
+            }
+        } catch (JsonProcessingException ex) {
+            log.warn("解析建库快照失败：{}", ex.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 按快照取回资料实体（补触发用）。
+     *
+     * @param task 任务
+     * @return 仍存在且属于本人的资料
+     */
+    private List<Document> snapshotDocuments(IndexTask task) {
+        List<Document> result = new ArrayList<>();
+        for (Long docId : snapshotRevisions(task.getSnapshotJson()).keySet()) {
+            documentRepository
+                    .findByIdAndUploadedByAndDeletedFalse(docId, task.getUserId())
+                    .ifPresent(result::add);
+        }
+        return result;
+    }
+
     /* ------------------------------------------------------------ 工具 */
 
     /**
@@ -531,20 +707,15 @@ public class IndexServiceImpl implements IndexService {
     }
 
     /**
-     * 待入库资料：未删除且未停用。
+     * 待入库资料：本人的、未删除且未停用。
      *
+     * @param userId 归属人
      * @return 资料列表
      */
-    private List<Document> indexableDocuments() {
-        List<Document> all = documentRepository.findByDeletedFalseOrderByUpdatedAtDescIdDesc();
-        List<Document> result = new ArrayList<>(all.size());
-        for (Document doc : all) {
-            if ("DISABLED".equals(doc.getStatus())) {
-                continue;
-            }
-            result.add(doc);
-        }
-        return result;
+    private List<Document> indexableDocuments(Long userId) {
+        List<Document> all =
+                documentRepository.findByUploadedByAndDeletedFalseAndStatusNot(userId, "DISABLED");
+        return all;
     }
 
     /**

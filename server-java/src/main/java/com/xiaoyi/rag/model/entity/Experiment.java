@@ -1,13 +1,23 @@
 package com.xiaoyi.rag.model.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 
+/** 参数实验；归属列 user_id 由 V7 迁移加入，历史行保持 NULL。 */
 @Entity
 @Table(name = "experiment")
 public class Experiment {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** 归属用户；V7 之前的历史行为 NULL，不做回填。 */
+    @Column(name = "user_id")
+    private Long userId;
 
     @Column(nullable = false, length = 255)
     private String name;
@@ -38,6 +48,14 @@ public class Experiment {
 
     public Long getId() {
         return id;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public String getName() {

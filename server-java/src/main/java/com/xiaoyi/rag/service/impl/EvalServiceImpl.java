@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaoyi.rag.client.AiServiceClient;
 import com.xiaoyi.rag.client.dto.AiChatRequest;
 import com.xiaoyi.rag.client.dto.AiStreamEvent;
+import com.xiaoyi.rag.common.enums.ErrorCode;
 import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.model.dto.EvalBatchRequest;
 import com.xiaoyi.rag.model.entity.EvalRun;
@@ -39,6 +40,12 @@ public class EvalServiceImpl implements EvalService {
         this.questions = loadQuestions();
     }
 
+    /**
+     * 启动时崩溃恢复：跨全部用户扫描非终态批次。
+     *
+     * <p>这里没有请求上下文，也不知道残留行属于谁，所以刻意不过滤 user_id —— 重启后任何还挂在 PENDING/RUNNING 的批次都已经没有执行线程， 统一置 FAILED
+     * 才不会让前端永远转圈。
+     */
     @PostConstruct
     public void recoverInterrupted() {
         for (EvalRun row : repository.findByStatusIn(List.of("PENDING", "RUNNING"))) {
@@ -54,13 +61,13 @@ public class EvalServiceImpl implements EvalService {
     }
 
     @Override
-    public EvalRunVO start(EvalBatchRequest request) {
+    public EvalRunVO start(Long userId, EvalBatchRequest request) {
         if (request == null || request.mode() == null || request.k() == null)
-            throw new ApiException(40001, "评测参数缺失");
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "评测参数缺失");
         String mode = request.mode();
         int k = request.k();
         if (k < 1 || k > 10 || !List.of("both", "direct", "rag").contains(mode))
-            throw new ApiException(40001, "评测参数非法");
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "评测参数非法");
         List<EvalQuestionVO> selected = new ArrayList<>();
         if (request.questionIds() == null || request.questionIds().isEmpty())
             selected.addAll(questions);
@@ -70,10 +77,15 @@ public class EvalServiceImpl implements EvalService {
                         questions.stream()
                                 .filter(item -> item.id().equals(id))
                                 .findFirst()
-                                .orElseThrow(() -> new ApiException(40001, "题目不存在: " + id));
+                                .orElseThrow(
+                                        () ->
+                                                new ApiException(
+                                                        ErrorCode.INVALID_PARAM.getCode(),
+                                                        "题目不存在: " + id));
                 if (!selected.contains(q)) selected.add(q);
             }
         EvalRun row = new EvalRun();
+        row.setUserId(userId);
         row.setMode(mode);
         row.setTopK(k);
         row.setQuestionCount(selected.size());
@@ -83,18 +95,19 @@ public class EvalServiceImpl implements EvalService {
         row = repository.saveAndFlush(row);
         EvalRunVO initial = toVO(row);
         Long id = row.getId();
-        Thread.startVirtualThread(() -> execute(id, List.copyOf(selected)));
+        Long owner = userId;
+        Thread.startVirtualThread(() -> execute(owner, id, List.copyOf(selected)));
         return initial;
     }
 
-    private void execute(Long id, List<EvalQuestionVO> selected) {
+    private void execute(Long userId, Long id, List<EvalQuestionVO> selected) {
         EvalRun row = repository.findById(id).orElseThrow();
         List<EvalCaseResultVO> cases = new ArrayList<>();
         try {
             row.setStatus("RUNNING");
             repository.save(row);
             for (EvalQuestionVO q : selected) {
-                cases.addAll(evaluate(List.of(q), row.getTopK(), Map.of()));
+                cases.addAll(evaluate(userId, List.of(q), row.getTopK(), Map.of()));
                 row.setProgress(cases.size() * 100 / selected.size());
                 saveResults(row, cases);
             }
@@ -140,12 +153,12 @@ public class EvalServiceImpl implements EvalService {
 
     @Override
     public List<EvalCaseResultVO> evaluate(
-            List<EvalQuestionVO> selected, int k, Map<String, Object> options) {
+            Long userId, List<EvalQuestionVO> selected, int k, Map<String, Object> options) {
         List<EvalCaseResultVO> cases = new ArrayList<>();
         for (EvalQuestionVO q : selected) {
             long start = System.nanoTime();
-            Answer direct = answer(q.question(), "direct", k, options);
-            Answer rag = answer(q.question(), "rag", k, options);
+            Answer direct = answer(userId, q.question(), "direct", k, options);
+            Answer rag = answer(userId, q.question(), "rag", k, options);
             cases.add(
                     new EvalCaseResultVO(
                             q.id(),
@@ -161,11 +174,13 @@ public class EvalServiceImpl implements EvalService {
         return cases;
     }
 
-    private Answer answer(String question, String mode, int k, Map<String, Object> options) {
+    private Answer answer(
+            Long userId, String question, String mode, int k, Map<String, Object> options) {
         CompletableFuture<Answer> completion = new CompletableFuture<>();
         StringBuilder text = new StringBuilder();
         List<String> sources = new ArrayList<>();
         ai.chatStream(
+                userId,
                 new AiChatRequest(question, List.of(), mode, k, List.of(), options),
                 new AiServiceClient.StreamListener() {
                     @Override
@@ -218,19 +233,37 @@ public class EvalServiceImpl implements EvalService {
     }
 
     @Override
-    public List<EvalRunVO> runs() {
-        return repository.findAllByOrderByCreatedAtDescIdDesc().stream().map(this::toVO).toList();
+    public List<EvalRunVO> runs(Long userId) {
+        return repository.findAllByUserIdOrderByCreatedAtDescIdDesc(userId).stream()
+                .map(this::toVO)
+                .toList();
     }
 
+    /**
+     * 单次评测详情。
+     *
+     * <p>别人的批次与不存在的 id 走同一个分支，统一 40403：返回 403 等于告诉调用方「这个 id 真的存在」， 那是比看不到内容更严重的泄露。
+     */
     @Override
-    public EvalRunVO run(String id) {
+    public EvalRunVO run(Long userId, String id) {
+        return toVO(
+                repository
+                        .findByIdAndUserId(parseId(id), userId)
+                        .orElseThrow(
+                                () ->
+                                        new ApiException(
+                                                ErrorCode.EVAL_RUN_NOT_FOUND.getCode(),
+                                                ErrorCode.EVAL_RUN_NOT_FOUND.getDefaultMessage())));
+    }
+
+    /** 契约 id 是字符串；格式不符按「记录不存在」处理，不抛 NumberFormatException。 */
+    private Long parseId(String id) {
         try {
-            return toVO(
-                    repository
-                            .findById(Long.parseLong(id))
-                            .orElseThrow(() -> new ApiException(40403, "评测记录不存在")));
+            return Long.parseLong(id);
         } catch (NumberFormatException error) {
-            throw new ApiException(40403, "评测记录不存在");
+            throw new ApiException(
+                    ErrorCode.EVAL_RUN_NOT_FOUND.getCode(),
+                    ErrorCode.EVAL_RUN_NOT_FOUND.getDefaultMessage());
         }
     }
 

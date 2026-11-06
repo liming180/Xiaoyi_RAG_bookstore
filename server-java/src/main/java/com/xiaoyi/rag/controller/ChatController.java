@@ -1,10 +1,12 @@
 package com.xiaoyi.rag.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xiaoyi.rag.client.AiServiceClient;
 import com.xiaoyi.rag.common.enums.ErrorCode;
 import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.common.interceptor.AuthInterceptor;
 import com.xiaoyi.rag.common.result.Result;
+import com.xiaoyi.rag.common.support.CurrentUser;
 import com.xiaoyi.rag.model.dto.ChatCommand;
 import com.xiaoyi.rag.model.dto.ChatContext;
 import com.xiaoyi.rag.model.dto.ChatRequest;
@@ -17,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -86,11 +89,12 @@ public class ChatController {
             @Valid @RequestBody(required = false) ChatRequest request,
             @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
         experimentService.assertChatAvailable();
+        Long current = CurrentUser.require(userId);
         // 所有可能失败的校验都在建 emitter 之前完成，失败时 GlobalExceptionHandler 能正常回信封。
         ChatContext context =
                 chatService.prepare(
                         new ChatCommand(
-                                userId == null ? 1L : userId,
+                                current,
                                 parseId(request == null ? null : request.conversationId()),
                                 request == null ? null : request.question(),
                                 request == null ? null : request.mode(),
@@ -98,64 +102,81 @@ public class ChatController {
 
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         AtomicBoolean closed = new AtomicBoolean(false);
+        // H3：浏览器断开后必须真正停掉上游。只把 closed 置位只是不再往外写，Python 那边仍在生成。
+        AtomicReference<AiServiceClient.StreamHandle> upstream = new AtomicReference<>();
+        Runnable cancelUpstream =
+                () -> {
+                    AiServiceClient.StreamHandle handle = upstream.getAndSet(null);
+                    if (handle != null) {
+                        handle.cancel();
+                    }
+                };
 
         emitter.onCompletion(
                 () -> {
                     if (closed.compareAndSet(false, true)) {
+                        cancelUpstream.run();
                         log.debug("SSE 完成 conversationId={}", context.conversationId());
                     }
                 });
         emitter.onTimeout(
                 () -> {
                     closed.set(true);
+                    cancelUpstream.run();
                     log.warn("SSE 超时 conversationId={}", context.conversationId());
                     emitter.complete();
                 });
         emitter.onError(
                 ex -> {
                     closed.set(true);
+                    cancelUpstream.run();
                     log.warn(
                             "SSE 连接异常 conversationId={}：{}",
                             context.conversationId(),
                             ex.getMessage());
                 });
 
-        chatService.stream(
-                context,
-                new ChatService.EventSink() {
-                    @Override
-                    public void emit(ChatStreamFrame frame) {
-                        if (closed.get()) {
-                            // 客户端已断开：丢弃后续事件，避免 IllegalStateException 刷日志。
-                            return;
-                        }
-                        try {
-                            emitter.send(
-                                    SseEmitter.event()
-                                            .name(frame.event())
-                                            .data(
-                                                    objectMapper.writeValueAsString(frame.data()),
-                                                    MediaType.TEXT_PLAIN));
-                        } catch (IOException | IllegalStateException ex) {
-                            closed.set(true);
-                            log.debug("SSE 推送失败，视为客户端断开：{}", ex.getMessage());
-                        }
-                    }
+        upstream.set(
+                chatService.stream(
+                        context,
+                        new ChatService.EventSink() {
+                            @Override
+                            public void emit(ChatStreamFrame frame) {
+                                if (closed.get()) {
+                                    // 客户端已断开：丢弃后续事件，避免 IllegalStateException 刷日志。
+                                    return;
+                                }
+                                try {
+                                    emitter.send(
+                                            SseEmitter.event()
+                                                    .name(frame.event())
+                                                    .data(
+                                                            objectMapper.writeValueAsString(
+                                                                    frame.data()),
+                                                            MediaType.TEXT_PLAIN));
+                                } catch (IOException | IllegalStateException ex) {
+                                    closed.set(true);
+                                    cancelUpstream.run();
+                                    log.debug("SSE 推送失败，视为客户端断开：{}", ex.getMessage());
+                                }
+                            }
 
-                    @Override
-                    public void complete() {
-                        if (closed.compareAndSet(false, true)) {
-                            emitter.complete();
-                        }
-                    }
+                            @Override
+                            public void complete() {
+                                if (closed.compareAndSet(false, true)) {
+                                    cancelUpstream.run();
+                                    emitter.complete();
+                                }
+                            }
 
-                    @Override
-                    public void fail(Throwable error) {
-                        if (closed.compareAndSet(false, true)) {
-                            emitter.completeWithError(error);
-                        }
-                    }
-                });
+                            @Override
+                            public void fail(Throwable error) {
+                                if (closed.compareAndSet(false, true)) {
+                                    cancelUpstream.run();
+                                    emitter.completeWithError(error);
+                                }
+                            }
+                        }));
 
         return emitter;
     }
@@ -172,7 +193,7 @@ public class ChatController {
     public Result<RetrievalTraceVO> trace(
             @PathVariable String id,
             @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
-        return Result.ok(chatService.trace(userId == null ? 1L : userId, parseMessageId(id)));
+        return Result.ok(chatService.trace(CurrentUser.require(userId), parseMessageId(id)));
     }
 
     /**

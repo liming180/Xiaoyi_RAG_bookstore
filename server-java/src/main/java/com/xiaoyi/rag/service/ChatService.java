@@ -1,5 +1,6 @@
 package com.xiaoyi.rag.service;
 
+import com.xiaoyi.rag.client.AiServiceClient;
 import com.xiaoyi.rag.model.dto.ChatCommand;
 import com.xiaoyi.rag.model.dto.ChatContext;
 import com.xiaoyi.rag.model.vo.RetrievalTraceVO;
@@ -29,8 +30,9 @@ public interface ChatService {
      *
      * @param context 编排上下文
      * @param sink 事件出口
+     * @return 上游句柄；浏览器断开时调用方据此停止上游生成，避免白烧 token
      */
-    void stream(ChatContext context, EventSink sink);
+    AiServiceClient.StreamHandle stream(ChatContext context, EventSink sink);
 
     /**
      * 读某条消息的检索轨迹。

@@ -44,6 +44,9 @@ import org.springframework.web.multipart.MultipartFile;
  *
  * <p>路径穿越：先按 {@code Path#getFileName()} 截末段再校验（error-codes.md §12「不报错」）， 落盘时 {@link
  * LocalStorage#store} 里还有一道 {@code startsWith(root)} 兜底。
+ *
+ * <p>H2 隔离：所有读写都带 {@code userId}。别人的资料一律当作不存在（{@code 40401}），不区分「无权限」和「没有」， 避免用状态码枚举他人资料
+ * id。去重也只在本人范围内做 —— 同一份正文被两个用户分别上传，各存一份，互不可见。
  */
 @Service
 public class DocumentServiceImpl implements DocumentService {
@@ -88,8 +91,10 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DocumentVO> list() {
-        List<Document> rows = documentRepository.findByDeletedFalseOrderByUpdatedAtDescIdDesc();
+    public List<DocumentVO> list(Long userId) {
+        List<Document> rows =
+                documentRepository.findByUploadedByAndDeletedFalseOrderByUpdatedAtDescIdDesc(
+                        userId);
         List<DocumentVO> result = new ArrayList<>(rows.size());
         for (Document row : rows) {
             result.add(toVO(row));
@@ -147,9 +152,10 @@ public class DocumentServiceImpl implements DocumentService {
             }
             String sha256 = sha256Hex(bytes);
             Optional<Document> duplicated =
-                    documentRepository.findFirstBySha256AndDeletedFalse(sha256);
+                    documentRepository.findFirstBySha256AndUploadedByAndDeletedFalse(
+                            sha256, userId);
             if (duplicated.isPresent()) {
-                // 同一份内容已经收过：不重复落盘，直接把已有记录回给前端（sha256 去重）。
+                // 本人已收过同一份内容：不重复落盘，直接把已有记录回给前端（sha256 去重，按用户隔离）。
                 accepted.add(toVO(duplicated.get()));
                 continue;
             }
@@ -178,15 +184,15 @@ public class DocumentServiceImpl implements DocumentService {
             accepted.add(toVO(saved));
         }
         if (!accepted.isEmpty()) {
-            markNeedsRebuild();
+            markNeedsRebuild(userId);
         }
         return new UploadResultVO(accepted, skipped);
     }
 
     @Override
     @Transactional
-    public DocumentVO update(Long documentId, UpdateDocumentRequest request) {
-        Document entity = requireDocument(documentId);
+    public DocumentVO update(Long userId, Long documentId, UpdateDocumentRequest request) {
+        Document entity = requireDocument(userId, documentId);
         if (request != null) {
             if (request.title() != null && !request.title().isBlank()) {
                 entity.setTitle(truncate(request.title().trim()));
@@ -202,18 +208,18 @@ public class DocumentServiceImpl implements DocumentService {
             }
         }
         Document saved = documentRepository.save(entity);
-        markNeedsRebuild();
+        markNeedsRebuild(userId);
         return toVO(saved);
     }
 
     @Override
     @Transactional
-    public void delete(Long documentId) {
-        Document entity = requireDocument(documentId);
-        // 手册 §6：有未完成任务时先置 FAILED 再删。
+    public void delete(Long userId, Long documentId) {
+        Document entity = requireDocument(userId, documentId);
+        // 手册 §6：有未完成任务时先置 FAILED 再删。只中止本人任务，别把别人的建库打断。
         List<IndexTask> running =
-                indexTaskRepository.findByStatusInOrderByCreatedAtDesc(
-                        List.of(IndexTask.STATUS_PENDING, IndexTask.STATUS_RUNNING));
+                indexTaskRepository.findByUserIdAndStatusInOrderByCreatedAtDesc(
+                        userId, List.of(IndexTask.STATUS_PENDING, IndexTask.STATUS_RUNNING));
         for (IndexTask task : running) {
             task.setStatus(IndexTask.STATUS_FAILED);
             task.setError("资料已删除，建库任务中止");
@@ -225,8 +231,8 @@ public class DocumentServiceImpl implements DocumentService {
         } catch (IOException ex) {
             log.warn("删除磁盘文件失败（继续删元数据）：{} - {}", entity.getId(), ex.getMessage());
         }
-        documentRepository.softDeleteById(entity.getId());
-        markNeedsRebuild();
+        documentRepository.softDeleteByIdAndUploadedBy(entity.getId(), userId);
+        markNeedsRebuild(userId);
     }
 
     @Override
@@ -235,26 +241,29 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 语料变了就把已建好的索引标脏。
+     * 语料变了就把该用户已建好的索引标脏。
      *
      * <p>库里没有独立 index_status 列，故直接从 document 状态推导（手册 §6 第 5 条允许这种推导）。
+     *
+     * @param userId 归属人
      */
-    private void markNeedsRebuild() {
-        int touched = documentRepository.markIndexedAsNeedsRebuild();
+    private void markNeedsRebuild(Long userId) {
+        int touched = documentRepository.markIndexedAsNeedsRebuild(userId);
         if (touched > 0) {
-            log.debug("{} 份资料的索引已标脏为 NEEDS_REBUILD", touched);
+            log.debug("用户 {} 的 {} 份资料索引已标脏为 NEEDS_REBUILD", userId, touched);
         }
     }
 
     /**
-     * 取资料，不存在或已软删都抛 {@code 40401}。
+     * 取本人资料，不存在、已软删或属于别人都抛 {@code 40401}。
      *
+     * @param userId 归属人
      * @param documentId 资料 id
      * @return 资料实体
      */
-    private Document requireDocument(Long documentId) {
+    private Document requireDocument(Long userId, Long documentId) {
         return documentRepository
-                .findByIdAndDeletedFalse(documentId)
+                .findByIdAndUploadedByAndDeletedFalse(documentId, userId)
                 .orElseThrow(
                         () ->
                                 new ApiException(

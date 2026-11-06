@@ -43,6 +43,15 @@ public class Chunk {
     @Column(name = "task_id", nullable = false)
     private Long taskId;
 
+    /**
+     * 片段归属的用户，冗余自 {@code index_task.user_id}。
+     *
+     * <p>冗余一列而不是每次 join 任务表：片段浏览、按用户计数、按用户整代替换都是热路径，join 一次要多扫一张表；
+     * 而片段只会随任务成功一次性写入，不存在「改了任务但片段没跟上」的窗口。
+     */
+    @Column(name = "user_id")
+    private Long userId;
+
     /** 片段号，形如 {@code D02-C001}；对外契约里有 {@code ^D\d{2}-C\d{3}$} 的模式约束。 */
     @Column(name = "chunk_id", nullable = false, length = 32)
     private String chunkId;
@@ -124,6 +133,14 @@ public class Chunk {
 
     public void setTaskId(Long taskId) {
         this.taskId = taskId;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public String getChunkId() {

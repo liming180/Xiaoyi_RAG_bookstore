@@ -47,8 +47,52 @@ public class IndexTask {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "user_id")
+    private Long userId;
+
+    @Column(name = "generation", length = 64)
+    private String generation;
+
+    @Column(name = "submission_key", length = 64)
+    private String submissionKey;
+
+    @Column(name = "snapshot_json", columnDefinition = "LONGTEXT")
+    private String snapshotJson;
+
     @Column(name = "status", nullable = false, length = 16)
     private String status;
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
+    }
+
+    public String getGeneration() {
+        return generation;
+    }
+
+    public void setGeneration(String generation) {
+        this.generation = generation;
+    }
+
+    public String getSubmissionKey() {
+        return submissionKey;
+    }
+
+    public void setSubmissionKey(String submissionKey) {
+        this.submissionKey = submissionKey;
+    }
+
+    public String getSnapshotJson() {
+        return snapshotJson;
+    }
+
+    public void setSnapshotJson(String snapshotJson) {
+        this.snapshotJson = snapshotJson;
+    }
 
     @Column(name = "stage", nullable = false, length = 16)
     private String stage;

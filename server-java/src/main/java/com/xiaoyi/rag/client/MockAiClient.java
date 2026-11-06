@@ -19,7 +19,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,8 +136,15 @@ public class MockAiClient implements AiServiceClient {
 
     private final AtomicInteger ingestSequence = new AtomicInteger();
 
-    /** 已登记的入库任务：taskId → 状态。 */
+    /** 已登记的入库任务：taskId → 状态。任务自带 userId，跨用户查询按不存在处理。 */
     private final Map<String, MockIngest> ingests = new ConcurrentHashMap<>();
+
+    /**
+     * 幂等索引：{@code userId + "\u0000" + submissionKey} → taskId。
+     *
+     * <p>H3 要求「同一个用户用同一个 submissionKey 重试，必须拿到同一个任务」。mock 里没有数据库， 就用这张表模拟 Python 侧的唯一约束。
+     */
+    private final Map<String, String> submissionIndex = new ConcurrentHashMap<>();
 
     private final XiaoyiProperties properties;
 
@@ -144,7 +153,7 @@ public class MockAiClient implements AiServiceClient {
     }
 
     @Override
-    public void chatStream(AiChatRequest request, StreamListener listener) {
+    public StreamHandle chatStream(Long userId, AiChatRequest request, StreamListener listener) {
         if (properties.getAi().isFailMode()) {
             // 降级路径的验收入口：抛出去由 ChatServiceImpl 捕获，转 done{degraded:true}。
             throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
@@ -194,11 +203,31 @@ public class MockAiClient implements AiServiceClient {
                     log.debug("MockAiClient 推完一轮事件 mode={} k={}", mode, topK);
                 });
 
+        // H3：浏览器断开后必须能停掉「上游」。mock 的上游就是这些排期任务，取消掉就不再往外推事件，
+        // 与真实客户端关掉 HTTP 流的效果一致，ChatServiceImpl 的取消路径才能被测试覆盖。
+        AtomicBoolean cancelled = new AtomicBoolean();
+        List<ScheduledFuture<?>> futures = new ArrayList<>(script.size());
         long delay = FIRST_DELAY_MS;
         for (Runnable step : script) {
-            scheduler.schedule(step, delay, TimeUnit.MILLISECONDS);
+            futures.add(
+                    scheduler.schedule(
+                            () -> {
+                                if (cancelled.get()) {
+                                    return;
+                                }
+                                step.run();
+                            },
+                            delay,
+                            TimeUnit.MILLISECONDS));
             delay += stepDelay;
         }
+        return () -> {
+            if (cancelled.compareAndSet(false, true)) {
+                for (ScheduledFuture<?> future : futures) {
+                    future.cancel(false);
+                }
+            }
+        };
     }
 
     /** 确定性联调答案；仅 mock provider 使用，不承担真实检索或生成逻辑。 */
@@ -244,7 +273,7 @@ public class MockAiClient implements AiServiceClient {
     }
 
     @Override
-    public AiParseResult parseDocuments(AiParseRequest request) {
+    public AiParseResult parseDocuments(Long userId, AiParseRequest request) {
         if (properties.getAi().isFailMode()) {
             throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
         }
@@ -252,21 +281,38 @@ public class MockAiClient implements AiServiceClient {
                 request == null || request.documents() == null ? List.of() : request.documents();
         int chunkSize = request == null || request.chunkSize() == null ? 180 : request.chunkSize();
         int overlap = request == null || request.overlap() == null ? 30 : request.overlap();
-        String taskId = "mock-ingest-" + ingestSequence.incrementAndGet();
+        String submissionKey = request == null ? null : request.submissionKey();
 
-        MockIngest ingest = new MockIngest(taskId, documents, chunkSize, overlap);
+        // 幂等：同一用户、同一 submissionKey 的重试必须拿到同一个 task_id，
+        // 与 Python 侧 (user_id, submission_key) 唯一约束语义一致。Java 侧触发超时后重放的就是同一次提交。
+        if (submissionKey != null && !submissionKey.isBlank()) {
+            String existing = submissionIndex.get(submissionIndexKey(userId, submissionKey));
+            if (existing != null) {
+                log.debug("MockAiClient 命中幂等键，复用入库任务 {}（用户 {}）", existing, userId);
+                MockIngest known = ingests.get(existing);
+                int knownDocs = known == null ? documents.size() : known.documents.size();
+                return new AiParseResult(existing, knownDocs);
+            }
+        }
+
+        String taskId = "mock-ingest-" + ingestSequence.incrementAndGet();
+        MockIngest ingest = new MockIngest(taskId, userId, documents, chunkSize, overlap);
         ingests.put(taskId, ingest);
+        if (submissionKey != null && !submissionKey.isBlank()) {
+            submissionIndex.putIfAbsent(submissionIndexKey(userId, submissionKey), taskId);
+        }
         log.debug("MockAiClient 登记入库任务 {}，文档 {} 份", taskId, documents.size());
         return new AiParseResult(taskId, documents.size());
     }
 
     @Override
-    public AiIngestTask getIngestTask(String taskId) {
+    public AiIngestTask getIngestTask(Long userId, String taskId) {
         if (properties.getAi().isFailMode()) {
             throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
         }
         MockIngest ingest = ingests.get(taskId);
-        if (ingest == null) {
+        // 跨用户的任务按「不存在」处理：不区分「没有」和「不是你的」，避免任务 id 变成探测他人建库状态的侧信道。
+        if (ingest == null || !ingest.userId.equals(userId)) {
             throw new IllegalStateException("mock 里没有入库任务：" + taskId);
         }
         if (ingest.pollFail) {
@@ -297,12 +343,15 @@ public class MockAiClient implements AiServiceClient {
     }
 
     @Override
-    public AiIndexManifest getIndexManifest() {
+    public AiIndexManifest getIndexManifest(Long userId) {
         if (properties.getAi().isFailMode()) {
             throw new IllegalStateException("mock fail-mode：模拟 AI 服务不可达");
         }
         MockIngest latest = null;
         for (MockIngest ingest : ingests.values()) {
+            if (!ingest.userId.equals(userId)) {
+                continue;
+            }
             if (ingest.finishedAt != null
                     && (latest == null || ingest.finishedAt > latest.finishedAt)) {
                 latest = ingest;
@@ -352,6 +401,17 @@ public class MockAiClient implements AiServiceClient {
         return picked;
     }
 
+    /**
+     * 幂等键的组合方式：用户与提交键之间用 NUL 分隔，避免两个不同用户各自使用 "a" / "b" 时拼出同一个键。
+     *
+     * @param userId 归属用户
+     * @param submissionKey 提交幂等键
+     * @return 组合后的 map 键
+     */
+    private static String submissionIndexKey(Long userId, String submissionKey) {
+        return userId + "\u0000" + submissionKey;
+    }
+
     @PreDestroy
     public void shutdown() {
         scheduler.shutdownNow();
@@ -361,6 +421,9 @@ public class MockAiClient implements AiServiceClient {
     private static final class MockIngest {
 
         private final String taskId;
+
+        /** 归属用户：所有读接口都先比对它，跨用户一律当「任务不存在」。 */
+        private final Long userId;
 
         private final List<AiParseDocumentItem> documents;
 
@@ -377,8 +440,13 @@ public class MockAiClient implements AiServiceClient {
         private volatile List<AiChunk> cached;
 
         private MockIngest(
-                String taskId, List<AiParseDocumentItem> documents, int chunkSize, int overlap) {
+                String taskId,
+                Long userId,
+                List<AiParseDocumentItem> documents,
+                int chunkSize,
+                int overlap) {
             this.taskId = taskId;
+            this.userId = userId;
             this.documents = documents;
             this.chunkSize = chunkSize;
             this.overlap = overlap;

@@ -81,12 +81,20 @@ xiaoyi:
   ai:
     # J1 阶段走 MockAiClient，不真连 Python
     base-url: ${AI_SERVICE_URL:http://127.0.0.1:8000}
-    internal-token: ${INTERNAL_TOKEN:dev-internal-token}
+    internal-token: ${INTERNAL_TOKEN:}
     connect-timeout-ms: ${AI_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${AI_READ_TIMEOUT_MS:60000}
     ingest-submit-timeout-ms: ${AI_INGEST_SUBMIT_TIMEOUT_MS:10000}
     status-timeout-ms: ${AI_STATUS_TIMEOUT_MS:5000}
     mock: ${AI_MOCK:true}
+  auth:
+    jwt-secret: ${AUTH_JWT_SECRET:}
+    issuer: ${AUTH_JWT_ISSUER:xiaoyi-rag}
+    token-ttl-seconds: ${AUTH_TOKEN_TTL_SECONDS:3600}
+    bootstrap-username: ${AUTH_BOOTSTRAP_USERNAME:}
+    bootstrap-password: ${AUTH_BOOTSTRAP_PASSWORD:}
+    secondary-bootstrap-username: ${AUTH_SECONDARY_BOOTSTRAP_USERNAME:}
+    secondary-bootstrap-password: ${AUTH_SECONDARY_BOOTSTRAP_PASSWORD:}
   storage:
     root: ${STORAGE_ROOT:./storage}
 

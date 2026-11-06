@@ -4,6 +4,7 @@ import com.xiaoyi.rag.common.enums.ErrorCode;
 import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.common.interceptor.AuthInterceptor;
 import com.xiaoyi.rag.common.result.Result;
+import com.xiaoyi.rag.common.support.CurrentUser;
 import com.xiaoyi.rag.model.dto.UpdateDocumentRequest;
 import com.xiaoyi.rag.model.vo.ChunkItemVO;
 import com.xiaoyi.rag.model.vo.DocumentVO;
@@ -51,8 +52,9 @@ public class KnowledgeController {
 
     @GetMapping("/documents")
     @Operation(operationId = "listDocuments", summary = "资料列表")
-    public Result<List<DocumentVO>> listDocuments() {
-        return Result.ok(documentService.list());
+    public Result<List<DocumentVO>> listDocuments(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(documentService.list(CurrentUser.require(userId)));
     }
 
     /**
@@ -69,30 +71,35 @@ public class KnowledgeController {
         if (files == null || files.isEmpty()) {
             throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "请至少上传一个文件（字段名 files）");
         }
-        return Result.ok(documentService.upload(files, userId == null ? 1L : userId));
+        return Result.ok(documentService.upload(files, CurrentUser.require(userId)));
     }
 
     @PutMapping("/documents/{id}")
     @Operation(operationId = "updateDocument", summary = "改标题 / 标签 / 启停用")
     public Result<DocumentVO> updateDocument(
-            @PathVariable String id, @RequestBody(required = false) UpdateDocumentRequest request) {
-        return Result.ok(documentService.update(parseId(id), request));
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId,
+            @PathVariable String id,
+            @RequestBody(required = false) UpdateDocumentRequest request) {
+        return Result.ok(documentService.update(CurrentUser.require(userId), parseId(id), request));
     }
 
     @DeleteMapping("/documents/{id}")
     @Operation(operationId = "deleteDocument", summary = "删除资料")
-    public Result<Void> deleteDocument(@PathVariable String id) {
-        documentService.delete(parseId(id));
+    public Result<Void> deleteDocument(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId,
+            @PathVariable String id) {
+        documentService.delete(CurrentUser.require(userId), parseId(id));
         return Result.ok();
     }
 
     @GetMapping("/chunks")
     @Operation(operationId = "listChunks", summary = "片段列表，可按 docId / q / kind 过滤")
     public Result<List<ChunkItemVO>> listChunks(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId,
             @RequestParam(required = false) String docId,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String kind) {
-        return Result.ok(indexService.listChunks(docId, q, kind));
+        return Result.ok(indexService.listChunks(CurrentUser.require(userId), docId, q, kind));
     }
 
     /**

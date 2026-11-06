@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 
 /**
@@ -61,6 +62,19 @@ public class Document {
 
     @Column(name = "uploaded_by")
     private Long uploadedBy;
+
+    /**
+     * 乐观锁版本号。
+     *
+     * <p>建库成功时用它判断「这份资料从我拍快照到现在有没有被改过」：快照里带 revision，收尾时原子地 {@code where revision =
+     * :snapshotRevision} 才落片段并把资料置 INDEXED，避免建库期间用户改了标题/正文却被静默覆盖。
+     *
+     * <p>注意：JPQL 批量 update 不会触发 {@code @Version}，所以 {@code markSnapshotIndexed} 里显式 {@code revision
+     * = revision + 1}。
+     */
+    @Version
+    @Column(name = "revision", nullable = false)
+    private Long revision;
 
     @Column(name = "deleted", nullable = false)
     private Boolean deleted;
@@ -201,6 +215,14 @@ public class Document {
 
     public void setErrorMsg(String errorMsg) {
         this.errorMsg = errorMsg;
+    }
+
+    public Long getRevision() {
+        return revision;
+    }
+
+    public void setRevision(Long revision) {
+        this.revision = revision;
     }
 
     public Long getUploadedBy() {

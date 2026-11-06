@@ -20,6 +20,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
 class ExperimentServiceTest {
+    private static final Long OWNER = 3L;
+
     private final ExperimentRepository experiments = mock(ExperimentRepository.class);
     private final ExperimentRunRepository runs = mock(ExperimentRunRepository.class);
     private final EvalService eval = mock(EvalService.class);
@@ -48,13 +50,21 @@ class ExperimentServiceTest {
 
     @Test
     void rejectsBadBoundsNullValuesAndAllInvalidMatrix() {
-        assertCode(() -> service.create(null), 40001);
-        assertCode(() -> service.create(request(List.of(49), List.of(0), List.of(3))), 40001);
-        assertCode(() -> service.create(request(List.of(1001), List.of(0), List.of(3))), 40001);
-        assertCode(() -> service.create(request(List.of(180), List.of(-1), List.of(3))), 40001);
-        assertCode(() -> service.create(request(List.of(180), List.of(0), List.of(11))), 40001);
-        assertCode(() -> service.create(request(List.of(180), List.of(180), List.of(3))), 40004);
-        assertCode(() -> service.create(request(List.of(), List.of(0), List.of(3))), 40004);
+        assertCode(() -> service.create(OWNER, null), 40001);
+        // chunkSize 越界走专用错误码 40002（openapi x-error-codes 明确列出）。
+        assertCode(
+                () -> service.create(OWNER, request(List.of(49), List.of(0), List.of(3))), 40002);
+        assertCode(
+                () -> service.create(OWNER, request(List.of(1001), List.of(0), List.of(3))), 40002);
+        assertCode(
+                () -> service.create(OWNER, request(List.of(180), List.of(-1), List.of(3))), 40001);
+        assertCode(
+                () -> service.create(OWNER, request(List.of(180), List.of(0), List.of(11))), 40001);
+        // overlap >= chunkSize 的组合被跳过，矩阵为空 → 40004。
+        assertCode(
+                () -> service.create(OWNER, request(List.of(180), List.of(180), List.of(3))),
+                40004);
+        assertCode(() -> service.create(OWNER, request(List.of(), List.of(0), List.of(3))), 40004);
         assertThat(service.isRunning()).isFalse();
         verify(experiments, never()).saveAndFlush(any());
     }
@@ -74,7 +84,9 @@ class ExperimentServiceTest {
         id.setAccessible(true);
         id.set(experiment, 1L);
         when(experiments.saveAndFlush(any())).thenReturn(experiment);
-        when(experiments.findById(1L)).thenReturn(java.util.Optional.of(experiment));
+        // H2 之后所有按 id 取行的路径都带归属：只 stub 全局 findById 会落到 40405。
+        when(experiments.findByIdAndUserId(1L, OWNER))
+                .thenReturn(java.util.Optional.of(experiment));
         when(eval.questions()).thenThrow(new IllegalStateException("provider failure"));
         CountDownLatch finished = new CountDownLatch(1);
         doAnswer(
@@ -86,7 +98,7 @@ class ExperimentServiceTest {
                         })
                 .when(experiments)
                 .save(any());
-        service.create(request(List.of(180), List.of(0), List.of(3)));
+        service.create(OWNER, request(List.of(180), List.of(0), List.of(3)));
         assertThat(finished.await(3, TimeUnit.SECONDS)).isTrue();
         // finish saves inside a transaction; wait for finally without a timing-based sleep.
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);

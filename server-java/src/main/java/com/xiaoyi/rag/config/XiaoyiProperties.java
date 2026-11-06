@@ -1,5 +1,8 @@
 package com.xiaoyi.rag.config;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -11,11 +14,91 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>用 {@code @ConfigurationProperties} 而不是散落的 {@code @Value}： 列表字段可以直接绑 {@code a,b,c} 字符串，也能绑 YAML
  * 列表，两种写法都吃。
  */
+@org.springframework.validation.annotation.Validated
 @ConfigurationProperties(prefix = "xiaoyi")
 public class XiaoyiProperties {
 
     private Cors cors = new Cors();
-    private Ai ai = new Ai();
+    @Valid private Ai ai = new Ai();
+    @Valid private Auth auth = new Auth();
+
+    public Auth getAuth() {
+        return auth;
+    }
+
+    public void setAuth(Auth auth) {
+        this.auth = auth;
+    }
+
+    public static class Auth {
+        @NotBlank private String jwtSecret;
+        @NotBlank private String issuer = "xiaoyi-rag";
+
+        @Min(1)
+        private long tokenTtlSeconds = 3600;
+
+        private String bootstrapUsername;
+        private String bootstrapPassword;
+        private String secondaryBootstrapUsername;
+        private String secondaryBootstrapPassword;
+
+        public String getJwtSecret() {
+            return jwtSecret;
+        }
+
+        public void setJwtSecret(String value) {
+            jwtSecret = value;
+        }
+
+        public String getIssuer() {
+            return issuer;
+        }
+
+        public void setIssuer(String value) {
+            issuer = value;
+        }
+
+        public long getTokenTtlSeconds() {
+            return tokenTtlSeconds;
+        }
+
+        public void setTokenTtlSeconds(long value) {
+            tokenTtlSeconds = value;
+        }
+
+        public String getBootstrapUsername() {
+            return bootstrapUsername;
+        }
+
+        public void setBootstrapUsername(String value) {
+            bootstrapUsername = value;
+        }
+
+        public String getBootstrapPassword() {
+            return bootstrapPassword;
+        }
+
+        public void setBootstrapPassword(String value) {
+            bootstrapPassword = value;
+        }
+
+        public String getSecondaryBootstrapUsername() {
+            return secondaryBootstrapUsername;
+        }
+
+        public void setSecondaryBootstrapUsername(String value) {
+            secondaryBootstrapUsername = value;
+        }
+
+        public String getSecondaryBootstrapPassword() {
+            return secondaryBootstrapPassword;
+        }
+
+        public void setSecondaryBootstrapPassword(String value) {
+            secondaryBootstrapPassword = value;
+        }
+    }
+
     private Storage storage = new Storage();
     private Chat chat = new Chat();
     private Index index = new Index();
@@ -79,7 +162,7 @@ public class XiaoyiProperties {
     public static class Ai {
 
         private String baseUrl = "http://127.0.0.1:8000";
-        private String internalToken = "dev-internal-token";
+        @NotBlank private String internalToken;
         private int connectTimeoutMs = 5000;
         private int readTimeoutMs = 60000;
         private int ingestSubmitTimeoutMs = 10000;

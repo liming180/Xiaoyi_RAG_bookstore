@@ -2,6 +2,7 @@ package com.xiaoyi.rag.controller;
 
 import com.xiaoyi.rag.common.interceptor.AuthInterceptor;
 import com.xiaoyi.rag.common.result.Result;
+import com.xiaoyi.rag.common.support.CurrentUser;
 import com.xiaoyi.rag.model.dto.CreateConversationRequest;
 import com.xiaoyi.rag.model.vo.ConversationVO;
 import com.xiaoyi.rag.model.vo.MessageVO;
@@ -85,13 +86,15 @@ public class ConversationController {
     }
 
     /**
-     * 取当前用户：拦截器已保证受保护路径带 token，这里只是兜底。
+     * 取当前用户：身份只来自已验签 token，缺失即 401/40100。
+     *
+     * <p>不再兜底成 1L —— 兜底会把匿名请求静默升级成 demo 用户的身份，等于绕开鉴权直接读别人的会话。
      *
      * @param userId 拦截器写入的请求属性
      * @return 非空用户 id
      */
     private Long currentUser(Long userId) {
-        return userId == null ? 1L : userId;
+        return CurrentUser.require(userId);
     }
 
     /**

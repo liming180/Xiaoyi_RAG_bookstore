@@ -8,6 +8,7 @@ import com.xiaoyi.rag.client.dto.AiStreamEvent;
 import com.xiaoyi.rag.common.enums.ErrorCode;
 import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.common.support.CitationMapper;
+import com.xiaoyi.rag.common.support.CurrentUser;
 import com.xiaoyi.rag.common.support.MessageJsonCodec;
 import com.xiaoyi.rag.config.AsyncConfig;
 import com.xiaoyi.rag.config.XiaoyiProperties;
@@ -120,7 +121,9 @@ public class ChatServiceImpl implements ChatService {
         }
         String mode = normalizeMode(command.mode());
         int k = normalizeK(command.k());
-        Long userId = command.userId() == null ? 1L : command.userId();
+        // H1/H2：身份只能来自已验签的 token，不再兜底成 1L —— 兜底等于把匿名请求当成 demo 用户，
+        // 于是任何人拿不到 token 也能读到 demo 的资料、会话和评测记录。
+        Long userId = CurrentUser.require(command.userId());
 
         Conversation conversation = resolveConversation(userId, command.conversationId(), question);
         List<HistoryTurn> history = loadHistory(conversation.getId());
@@ -128,7 +131,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public void stream(ChatContext context, EventSink sink) {
+    public AiServiceClient.StreamHandle stream(ChatContext context, EventSink sink) {
         StringBuilder answer = new StringBuilder();
         List<AiCitation> collected = Collections.synchronizedList(new ArrayList<>());
         long startedAt = System.currentTimeMillis();
@@ -144,7 +147,8 @@ public class ChatServiceImpl implements ChatService {
                         List.of());
 
         try {
-            aiServiceClient.chatStream(
+            return aiServiceClient.chatStream(
+                    context.userId(),
                     request,
                     new AiServiceClient.StreamListener() {
                         @Override
@@ -163,12 +167,14 @@ public class ChatServiceImpl implements ChatService {
             // 客户端本身在调用期就抛（连不上、熔断打开）：同样走降级，不把异常栈透给前端。
             log.warn("调用 AI 客户端失败，转降级：{}", ex.getMessage());
             degrade(context, sink, answer, collected, startedAt, terminated);
+            return AiServiceClient.StreamHandle.NOOP;
         }
     }
 
     @Override
     @Transactional(readOnly = true)
     public RetrievalTraceVO trace(Long userId, Long messageId) {
+        Long owner = CurrentUser.require(userId);
         Message message =
                 messageRepository
                         .findByIdAndDeletedFalse(messageId)
@@ -181,7 +187,7 @@ public class ChatServiceImpl implements ChatService {
                 conversationRepository
                         .findByIdAndDeletedFalse(message.getConversationId())
                         .orElse(null);
-        if (conversation == null || (userId != null && !userId.equals(conversation.getUserId()))) {
+        if (conversation == null || !owner.equals(conversation.getUserId())) {
             // 会话已删或不属于当前用户，等同消息不存在，不泄漏存在性。
             throw new ApiException(
                     ErrorCode.MESSAGE_NOT_FOUND.getCode(),
@@ -325,25 +331,54 @@ public class ChatServiceImpl implements ChatService {
         }
         Map<String, Integer> usage =
                 upstreamDone == null ? null : normalizeUsage(upstreamDone.usage());
-        persistExecutor.execute(
-                () -> {
-                    Long assistantId = null;
-                    try {
-                        assistantId =
-                                persistService.persistTurn(
-                                        context, content, citations, usage, elapsedMs, degraded);
-                    } catch (RuntimeException ex) {
-                        log.error("落库失败 conversationId={}", context.conversationId(), ex);
-                    }
-                    emitDone(sink, upstreamDone, assistantId, usage, elapsedMs, degraded);
-                    sink.complete();
-                });
+        try {
+            persistExecutor.execute(
+                    () -> {
+                        Long assistantId;
+                        try {
+                            assistantId =
+                                    persistService.persistTurn(
+                                            context, content, citations, usage, elapsedMs,
+                                            degraded);
+                        } catch (RuntimeException ex) {
+                            // H3：落库失败不能发「成功 done」。前端拿到 done 就会把这条回答当成已保存，
+                            // 之后拉 trace 必然 404，用户看到的是「检索过程丢失」且刷新即丢整轮对话。
+                            log.error("落库失败 conversationId={}", context.conversationId(), ex);
+                            emitPersistFailure(sink);
+                            sink.complete();
+                            return;
+                        }
+                        emitDone(sink, upstreamDone, assistantId, usage, elapsedMs, degraded);
+                        sink.complete();
+                    });
+        } catch (RuntimeException rejected) {
+            // 线程池已满 / 已关闭：同样不能假装保存成功，否则 done 里的 messageId 是个查不到的假 id。
+            log.error("落库任务提交被拒 conversationId={}", context.conversationId(), rejected);
+            emitPersistFailure(sink);
+            sink.complete();
+        }
+    }
+
+    /**
+     * 发「回答已生成但未能保存」的 error 帧。
+     *
+     * <p>刻意不复用降级 done：降级表示「AI 不可用但本轮已落库」，这里的语义是「AI 可用但落库失败」， 前端需要提示用户重试，而不是静默接受一条刷新即消失的回答。
+     *
+     * @param sink 出口
+     */
+    private void emitPersistFailure(EventSink sink) {
+        sink.emit(
+                new ChatStreamFrame(
+                        ChatStreamFrame.EVENT_ERROR,
+                        new ChatStreamFrame.Error(
+                                ErrorCode.INTERNAL_ERROR.getCode(), "回答已生成但保存失败，请重试", null)));
     }
 
     /**
      * 发 done 帧。
      *
-     * <p>{@code messageId} 优先用数据库 id：前端会拿它去拉 trace，用 Python 的字符串 id 查不到。
+     * <p>{@code messageId} 只认数据库 id：前端会拿它去拉 trace，用 Python 的字符串 id 查不到。 调用方保证落库成功后才走到这里，所以这里不再有「拿上游
+     * id 顶替」的兜底。
      */
     private void emitDone(
             EventSink sink,
@@ -358,10 +393,7 @@ public class ChatServiceImpl implements ChatService {
                         : upstreamDone.suggestions().stream()
                                 .limit(properties.getChat().getMaxSuggestions())
                                 .toList();
-        String messageId =
-                assistantId != null
-                        ? String.valueOf(assistantId)
-                        : (upstreamDone == null ? null : upstreamDone.messageId());
+        String messageId = String.valueOf(assistantId);
         sink.emit(
                 new ChatStreamFrame(
                         ChatStreamFrame.EVENT_DONE,
