@@ -20,6 +20,9 @@ export default tseslint.config(
       'public/**',
       // Chrome 用户数据目录（smoke/regress 的 --user-data-dir），里面有扩展与缓存脚本
       '.chrome-*/**',
+      // 契约生成物：由 npm run gen:api 从 docs/api/openapi-public.yaml 产出，
+      // 格式与注释都不受本仓库风格约束（它自带 eslint-disable 头，反而会报 unused directive）。
+      'src/types/api.generated.ts',
     ],
   },
   js.configs.recommended,

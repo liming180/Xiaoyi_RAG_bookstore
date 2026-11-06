@@ -1,9 +1,13 @@
 /**
- * 对外 API 契约模型（手写最小集）
+ * 对外 API 契约模型（手写视图层）
  *
- * 说明：docs/api/openapi-public.yaml 尚未生成。该文件当前由手写维护，
- *       YAML 就绪后执行 `npm run gen:api` 由 openapi-typescript 生成并替换本文件，
- *       业务代码只依赖本文件导出的类型，不感知生成方式。
+ * 契约唯一源头是 docs/api/openapi-public.yaml；`npm run gen:api` 生成
+ * src/types/api.generated.ts（机器可读、含全部 schema 与 operation）。
+ * 本文件是业务代码实际使用的视图模型：把契约里的 `string | number` 收窄成 string、
+ * 把可空字段显式标成 `| null`、把枚举拍平成字符串字面量，便于组件消费。
+ *
+ * 两边的属性名由 `npm run check:contract`（scripts/check-contract-drift.mjs）比对：
+ * 契约新增字段而这里漏掉 → 门禁失败。类型差异属于有意收窄，不参与比对。
  *
  * 命名约定：TS 侧统一 camelCase；线上可能出现的 snake_case（doc_title / heading_path /
  *          chunk_id 等）由 src/api/normalize.ts 统一归一，业务层不处理。
@@ -218,6 +222,18 @@ export interface UploadResult {
 
 export type IndexStatusValue = 'ready' | 'needs_rebuild' | 'unavailable';
 
+/** 最近一次成功建库的清单快照（契约 IndexManifest，字段全可选） */
+export interface IndexManifest {
+  embeddingModel?: string;
+  chunkSize?: number;
+  overlap?: number;
+  docCount?: number;
+  chunkCount?: number;
+  /** Unix 秒 */
+  builtAt?: number;
+  sha256?: string;
+}
+
 export interface IndexStatus {
   status: IndexStatusValue;
   docCount: number;
@@ -228,6 +244,8 @@ export interface IndexStatus {
   lastBuiltAt: number | null;
   /** 待重建原因，用于横幅补充说明 */
   reason?: string | null;
+  /** 上次建库的清单快照；从未建库时缺失 */
+  manifest?: IndexManifest | null;
 }
 
 export type IndexTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';

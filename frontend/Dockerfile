@@ -3,8 +3,10 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-ARG VITE_API_BASE_URL=/api/v1
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+# 前端只认 VITE_API_BASE（见 src/api/http.ts、src/api/modules/chat.ts）。
+# 默认 /api/v1 = 同源，由 nginx.conf 把 /api/ 反代到 java-backend:8080。
+ARG VITE_API_BASE=/api/v1
+ENV VITE_API_BASE=$VITE_API_BASE
 RUN npm run build:only
 
 FROM nginx:1.27-alpine

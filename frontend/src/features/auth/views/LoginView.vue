@@ -11,11 +11,8 @@ import { useUiPrefsStore } from '@/stores/uiPrefs';
 /**
  * 登录页（P6）。
  *
- * 阶段 1 是演示模式：后端放行任意账密，所以主路径就是「一键进入演示」。
- * 账密表单仍然保留并真的提交 —— 一方面验证 `POST /api/v1/auth/login` 的
- * 完整链路，另一方面等后端接入真实鉴权时不需要改前端结构。
- *
- * 演示模式说明写死在页面上而不是靠 README：验收时评委会直接打开这个页面。
+ * 当前登录必须使用部署或测试初始化创建的账号。JWT 保存于公共请求层，
+ * 后续请求统一携带 Bearer token；页面不再提供固定 demo 身份或任意用户名认领。
  */
 const route = useRoute();
 const router = useRouter();
@@ -24,10 +21,9 @@ const uiPrefs = useUiPrefsStore();
 const username = ref('');
 const password = ref('');
 const submitting = ref(false);
-const demoing = ref(false);
 const error = ref<string | null>(null);
 
-const busy = computed(() => submitting.value || demoing.value);
+const busy = computed(() => submitting.value);
 const canSubmit = computed(() => username.value.trim().length > 0 && password.value.length > 0);
 
 const target = computed(() => safeRedirect(route.query.redirect));
@@ -38,21 +34,6 @@ function onTheme(): void {
 
 async function afterLogin(): Promise<void> {
   await router.replace(target.value);
-}
-
-async function onDemo(): Promise<void> {
-  if (busy.value) return;
-  demoing.value = true;
-  error.value = null;
-  try {
-    await authApi.loginAsDemo();
-    ElMessage.success('已进入演示模式');
-    await afterLogin();
-  } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '进入演示模式失败，请重试';
-  } finally {
-    demoing.value = false;
-  }
 }
 
 async function onSubmit(): Promise<void> {
@@ -88,23 +69,11 @@ onMounted(() => {
         <p class="login__sub">把读书会的资料变成可以追问的答案</p>
       </header>
 
-      <div class="login__demo" data-testid="login-demo-note">
-        <strong>演示模式</strong>
-        <span>当前为课程演示版，未接入真实账号体系：点下面的按钮即可进入，无需注册。</span>
+      <div class="login__demo" data-testid="login-auth-note">
+        <strong>账号登录</strong>
+        <span>请输入部署或测试初始化创建的用户名和密码。</span>
       </div>
 
-      <el-button
-        class="login__demo-btn"
-        type="primary"
-        size="large"
-        :loading="demoing"
-        data-testid="login-demo"
-        @click="onDemo"
-      >
-        一键进入演示
-      </el-button>
-
-      <div class="login__divider"><span>或使用账号密码</span></div>
 
       <form class="login__form" data-testid="login-form" @submit.prevent="onSubmit">
         <el-input
@@ -140,7 +109,7 @@ onMounted(() => {
       <p v-if="error" class="login__error" data-testid="login-error">{{ error }}</p>
 
       <p class="login__foot">
-        阶段 1 演示版：知识库问答全部基于本地示例资料，回答会带引用编号，可点开核对原文。
+        登录后将按当前账号访问资料、建库任务、会话和问答数据。
       </p>
     </section>
   </div>

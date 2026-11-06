@@ -40,7 +40,7 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   async function create(title = '新会话'): Promise<Conversation | null> {
     try {
-      const conv = await chatApi.createConversation({ title });
+      const conv = await chatApi.createConversation(title);
       list.value = [conv, ...list.value];
       setActive(conv.id);
       return conv;

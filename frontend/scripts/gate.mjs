@@ -24,6 +24,12 @@ const GATES = [
   { key: 'lint', label: 'ESLint', cmd: 'npx', args: ['eslint', '.', '--max-warnings', '0'] },
   { key: 'typecheck', label: 'vue-tsc', cmd: 'npx', args: ['vue-tsc', '--noEmit'] },
   { key: 'test', label: 'vitest', cmd: 'npx', args: ['vitest', 'run', '--reporter', 'dot'] },
+  {
+    key: 'contract',
+    label: 'contract drift',
+    cmd: 'node',
+    args: ['scripts/check-contract-drift.mjs'],
+  },
 ];
 
 /** 传 --build 时追加生产构建门禁（构建产物 + 体积报告） */
@@ -33,10 +39,13 @@ if (process.argv.includes('--build')) {
 
 function run(cmd, args) {
   const started = Date.now();
-  const res = spawnSync(isWin ? `${cmd}.cmd` : cmd, args, {
+  // node 用当前解释器（Windows 上没有 node.cmd）；npx 等仍走 .cmd 包装
+  const isNode = cmd === 'node';
+  const file = isNode ? process.execPath : isWin ? `${cmd}.cmd` : cmd;
+  const res = spawnSync(file, args, {
     cwd: ROOT,
     encoding: 'utf8',
-    shell: isWin,
+    shell: isWin && !isNode,
     maxBuffer: 32 * 1024 * 1024,
   });
   const elapsedMs = Date.now() - started;

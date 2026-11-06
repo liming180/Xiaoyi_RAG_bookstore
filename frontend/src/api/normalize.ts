@@ -2,6 +2,7 @@ import type {
   Citation,
   CitationKind,
   DocumentMeta,
+  IndexManifest,
   IndexStatus,
   Message,
   RetrievalTrace,
@@ -11,11 +12,11 @@ import type {
 /**
  * 契约归一化层。
  *
- * 背景：docs/api/openapi-public.yaml 尚未定稿，规格 §7.5 与功能规格 F05 对 citations
- * 的字段命名/取值存在两种写法：
+ * 契约源头是 docs/api/openapi-public.yaml（`npm run gen:api` 生成 api.generated.ts）。
+ * 归一化仍保留，是因为历史 mock/种子数据与线上偶发的 snake_case（chunk_id / doc_title /
+ * heading_path）需要统一成 camelCase 的视图模型：
  *   - 规格 §7.5：{ ref: "D02-C001", docTitle, headingPath, chunk, start, end, score, stage }
  *   - 功能规格 F05：{ ref: 1, chunk_id, source, score, start, end, text }
- * 后端未定，前端必须同时吃下两种形状，统一成 camelCase 的 Citation。
  * 归一化只做「读」方向的兼容，绝不改后端字段。
  */
 
@@ -194,6 +195,7 @@ export function normalizeIndexStatus(input: unknown): IndexStatus {
   const status: IndexStatus['status'] =
     raw === 'ready' || raw === 'needs_rebuild' ? raw : 'unavailable';
   const lastBuilt = pick(o, 'lastBuiltAt', 'last_built_at', 'builtAt');
+  const manifest = pick(o, 'manifest');
   return {
     status,
     docCount: num(pick(o, 'docCount', 'doc_count')),
@@ -203,5 +205,23 @@ export function normalizeIndexStatus(input: unknown): IndexStatus {
     embeddingModel: str(pick(o, 'embeddingModel', 'embedding_model'), 'unknown'),
     lastBuiltAt: lastBuilt === undefined || lastBuilt === null ? null : num(lastBuilt),
     reason: str(pick(o, 'reason'), '') || null,
+    manifest: isDict(manifest) ? normalizeIndexManifest(manifest) : null,
+  };
+}
+
+/** 清单快照：字段全可选，缺失就保持 undefined（不编造 0） */
+function normalizeIndexManifest(o: Record<string, unknown>): IndexManifest {
+  const opt = (value: unknown): number | undefined =>
+    value === undefined || value === null || value === '' ? undefined : num(value);
+  const model = str(pick(o, 'embeddingModel', 'embedding_model'), '');
+  const sha = str(pick(o, 'sha256'), '');
+  return {
+    embeddingModel: model || undefined,
+    chunkSize: opt(pick(o, 'chunkSize', 'chunk_size')),
+    overlap: opt(pick(o, 'overlap')),
+    docCount: opt(pick(o, 'docCount', 'doc_count')),
+    chunkCount: opt(pick(o, 'chunkCount', 'chunk_count')),
+    builtAt: opt(pick(o, 'builtAt', 'built_at')),
+    sha256: sha || undefined,
   };
 }

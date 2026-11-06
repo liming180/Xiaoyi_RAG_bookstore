@@ -1,0 +1,10 @@
+# 给 Dockerfile.runtime 专用的忽略清单（BuildKit 会优先读 <Dockerfile>.dockerignore）。
+# 与 .dockerignore 的区别：这里不能排除 dist —— 运行期镜像正是要 COPY 已经构建好的 dist。
+node_modules
+.snapshots
+.vite
+dist-p7
+.chrome-p7-a
+.chrome-p7-b
+.chrome-dbg
+test-artifacts

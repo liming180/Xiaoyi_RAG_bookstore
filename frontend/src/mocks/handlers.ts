@@ -67,10 +67,16 @@ const profileHandler = http.get(`${BASE}/auth/profile`, () =>
 const listConversations = http.get(`${BASE}/conversations`, () => ok(getState().conversations));
 
 const createConversation = http.post(`${BASE}/conversations`, async ({ request }) => {
-  const body = (await request.json().catch(() => ({}))) as { title?: string };
+  const body = (await request.json().catch(() => ({}))) as { title?: unknown };
+  // 真实后端是 `CreateConversationRequest(String title)`：title 不是字符串就直接
+  // 反序列化失败回 400/40001。mock 必须同样严格，否则「请求体形状错了」这类
+  // 只有真机才暴露的缺陷会在门禁里全绿（历史上就发生过：{"title":{"title":"…"}}）。
+  if (body.title !== undefined && typeof body.title !== 'string') {
+    return fail(40001, '请求体格式不合法', 400);
+  }
   const conv: Conversation = {
     id: uid('c'),
-    title: body.title ?? '新会话',
+    title: body.title || '新会话',
     createdAt: now(),
     updatedAt: now(),
     messageCount: 0,

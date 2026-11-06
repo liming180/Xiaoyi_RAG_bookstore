@@ -30,7 +30,21 @@ export async function listConversations(): Promise<Conversation[]> {
   });
 }
 
-export async function createConversation(title = '新会话'): Promise<Conversation> {
+/**
+ * 新建会话。
+ *
+ * 参数同时接受字符串与 `{ title }` 对象：store 侧历史上传的是对象
+ * （`conversations.create` 调 `createConversation({ title })`），而函数签名
+ * 只声明了字符串，于是请求体变成 `{"title":{"title":"新会话"}}`，真实后端按
+ * `CreateConversationRequest(String title)` 反序列化失败回 400/40001 —— MSW 的
+ * handler 用 `body.title ?? '新会话'` 把对象原样塞进 title，所以 mock 门禁一直是绿的。
+ * 这里统一归一化，两种调用方式都发 `{"title":"..."}`。
+ */
+export async function createConversation(
+  input: string | { title?: string } = '新会话',
+): Promise<Conversation> {
+  const rawTitle = typeof input === 'string' ? input : input?.title;
+  const title = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : '新会话';
   const o = (await post<Record<string, unknown>>('/conversations', { title })) ?? {};
   return {
     id: String(o.id ?? o.conversationId ?? ''),

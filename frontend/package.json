@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "gen:api": "node scripts/gen-api-types.mjs",
+    "check:contract": "node scripts/check-contract-drift.mjs",
     "gate": "node scripts/gate.mjs",
     "snapshot": "node scripts/snapshot.mjs",
     "smoke": "node scripts/smoke.mjs",

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { HttpResponse, http as mswHttp } from 'msw';
 import { chatApi, knowledgeApi } from '@/api';
+import { server } from '@/mocks/node';
 
 describe('api/chat 模块（走 MSW）', () => {
   it('会话列表返回种子会话', async () => {
@@ -7,6 +9,30 @@ describe('api/chat 模块（走 MSW）', () => {
     expect(list.length).toBeGreaterThan(0);
     expect(list[0]).toHaveProperty('id');
     expect(list[0]).toHaveProperty('title');
+  });
+
+  it('新建会话的请求体是 {title:"..."}，不是嵌套对象', async () => {
+    // 回归：store 曾以 `createConversation({ title })` 调用，而函数签名只接受字符串，
+    // 于是真实后端收到 `{"title":{"title":"新会话"}}` 直接 400/40001；MSW handler 用
+    // `body.title ?? '新会话'` 把对象原样塞进 title，导致 mock 门禁全绿、真机必失败。
+    // 这里直接盯住线上形状，防止再退化。
+    const bodies: unknown[] = [];
+    server.use(
+      mswHttp.post('/api/v1/conversations', async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({
+          code: 0,
+          message: 'success',
+          data: { id: 'c-1', title: '新会话', createdAt: 1, updatedAt: 1, messageCount: 0 },
+          timestamp: 1,
+        });
+      }),
+    );
+
+    await chatApi.createConversation({ title: '对象形式' });
+    await chatApi.createConversation('字符串形式');
+
+    expect(bodies).toEqual([{ title: '对象形式' }, { title: '字符串形式' }]);
   });
 
   it('消息列表归一化出 citations 与 trace', async () => {

@@ -63,39 +63,34 @@ describe('登录页（P6）', () => {
     document.documentElement.dataset.theme = 'light';
   });
 
-  it('渲染演示模式说明、一键进入按钮与账密表单', async () => {
+  it('渲染真实账号说明与账密表单', async () => {
     const { wrapper } = await mountPage();
 
     expect(wrapper.find('[data-testid="page-login"]').exists()).toBe(true);
-    expect(wrapper.get('[data-testid="login-demo-note"]').text()).toContain('演示模式');
-    expect(wrapper.find('[data-testid="login-demo"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="login-auth-note"]').text()).toContain('账号登录');
+    expect(wrapper.find('[data-testid="login-demo"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true);
-    // 账密没填之前提交按钮是禁用的
     expect(wrapper.get('[data-testid="login-submit"]').attributes('disabled')).toBeDefined();
-  });
-
-  it('一键进入演示：拿到 token、写入 localStorage、跳对话页', async () => {
-    const { wrapper, router } = await mountPage();
-
-    await wrapper.get('[data-testid="login-demo"]').trigger('click');
-
-    await waitFor(() => router.currentRoute.value.name === 'chat', 4000, '跳转到 /chat');
-    expect(getToken()).toBeTruthy();
-    expect(window.localStorage.getItem(TOKEN_KEY)).toBeTruthy();
   });
 
   it('登录后按 redirect 回到原来想去的页面', async () => {
     const { wrapper, router } = await mountPage({ redirect: '/knowledge' });
 
-    await wrapper.get('[data-testid="login-demo"]').trigger('click');
+    await wrapper.get('[data-testid="login-username"]').setValue('alice');
+    await wrapper.get('[data-testid="login-password"]').setValue('pass-alice-123');
+    await wrapper.get('[data-testid="login-submit"]').trigger('click');
 
     await waitFor(() => router.currentRoute.value.fullPath === '/knowledge', 4000, '回到 /knowledge');
+    expect(getToken()).toBeTruthy();
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBeTruthy();
   });
 
   it('redirect 是站外地址时回落对话页', async () => {
     const { wrapper, router } = await mountPage({ redirect: '//evil.com/steal' });
 
-    await wrapper.get('[data-testid="login-demo"]').trigger('click');
+    await wrapper.get('[data-testid="login-username"]').setValue('alice');
+    await wrapper.get('[data-testid="login-password"]').setValue('pass-alice-123');
+    await wrapper.get('[data-testid="login-submit"]').trigger('click');
 
     await waitFor(() => router.currentRoute.value.fullPath === '/chat', 4000, '回落到 /chat');
   });

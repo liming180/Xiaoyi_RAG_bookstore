@@ -1,0 +1,22 @@
+# 运行时镜像：直接用宿主机已经构建好的 frontend/dist，容器里只跑 nginx。
+#
+# 为什么需要这个文件：node:22-alpine 能拉到，但 npm ci 在受限网络下也要装几百个包；
+# 而 dist 在宿主机 `npm run build:only` 已有产物，容器里只需要一个静态服务器。
+#
+# 构建前提（在 frontend 目录执行）：
+#   npm run build:only          # 产物 frontend/dist
+#
+# 用法（由 deploy/docker-compose.localdb-prebuilt.yml 调用，context 是 frontend 目录）：
+#   docker build -f Dockerfile.runtime -t xiaoyi-frontend:local .
+FROM nginx:1.27-alpine
+ARG VITE_API_BASE=/api/v1
+# 运行期镜像只装宿主机已构建好的 dist（容器内不跑 npm）。
+# 这里的校验是「产物确实来自一次带正确 VITE_API_BASE 的构建」：
+# Vite 会把 import.meta.env.VITE_API_BASE 内联成字面量写进 assets/*.js，
+# 若构建时用的是别的 base（例如误用 dev 配置），请求会打到不存在的路径，
+# 而 nginx.conf 只反代 /api/，表现就是整站 404。
+COPY dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN test -f /usr/share/nginx/html/index.html \
+    && grep -rqF "${VITE_API_BASE}" /usr/share/nginx/html/assets
+EXPOSE 80

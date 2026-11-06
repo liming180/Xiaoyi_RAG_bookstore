@@ -5,6 +5,11 @@ dist-smoke/
 dist-regress/
 .chrome-smoke-profile/
 .chrome-regress-profile/
+# P7 真实验收：VITE_USE_MOCK=false 的构建产物 + 双账号 Chrome profile
+dist-p7/
+.chrome-p7-a/
+.chrome-p7-b/
+.chrome-dbg/
 coverage/
 test-artifacts/
 .snapshots/

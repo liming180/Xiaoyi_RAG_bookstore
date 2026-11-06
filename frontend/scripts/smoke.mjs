@@ -46,7 +46,7 @@ const ROUTES = [
     path: '/login',
     name: 'login',
     title: '登录页',
-    expect: ['page-login', 'login-demo-note', 'login-demo', 'login-form'],
+    expect: ['page-login', 'login-auth-note', 'login-form'],
     auth: false,
   },
   {
