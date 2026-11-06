@@ -66,30 +66,30 @@ jobs:
           cache: pip
           cache-dependency-path: server-ai/requirements.txt
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python dependencies
         run: python -m pip install -r server-ai/requirements.txt -r test/requirements-test.txt
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Java unit and formatting gate
         working-directory: server-java
         run: mvn -q verify
 
       - name: Start Python AI service (real provider)
+        # STORAGE_ROOT 必须与 Java 的错开：test/conftest.py 的 _clear_storage() 会清空
+        # STORAGE_ROOT 下所有条目，而 Python 的 ai-state.sqlite3 默认就落在 STORAGE_ROOT。
+        # 共用同一目录时，第一个 clean_db fixture 就会把 Python 状态库删掉，后续任务全挂。
         env:
           INGEST_STAGE_DELAY_MS: ${{ env.REAL_STAGE_DELAY_MS }}
+          STORAGE_ROOT: ${{ github.workspace }}/test-artifacts/ci-ai-storage
         run: |
           mkdir -p "$STORAGE_ROOT"
           nohup python -m uvicorn app.main:app --app-dir server-ai --host 127.0.0.1 --port 8000 \
@@ -160,7 +160,7 @@ jobs:
 
       - name: Frontend gate
         working-directory: frontend
-        run: pnpm run gate
+        run: npm run gate
 
       - name: Architecture snapshot
         run: python tools/arch_snapshot.py

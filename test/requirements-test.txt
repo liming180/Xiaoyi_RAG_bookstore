@@ -7,3 +7,7 @@ jsonschema>=4.26
 respx>=0.22
 PyYAML>=6.0
 referencing>=0.35
+# test/conftest.py 的 clean_db / reset_ingest_state 直连 MySQL 清表；
+# 缺这个包时破坏性清理会静默 return False，J2/J4 里依赖「库真的被清」的用例
+# 会退化成跳过而不是失败 —— 门禁看起来绿，其实没验。
+PyMySQL>=1.1
