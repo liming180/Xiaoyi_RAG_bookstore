@@ -19,8 +19,10 @@ class ParseDocument(BaseModel):
     version: str = ""
 class ParseRequest(BaseModel):
     documents: list[ParseDocument] = Field(min_length=1)
-    chunk_size: int = Field(ge=50, le=1000)
-    overlap: int = Field(ge=0)
+    chunk_size: int = Field(180, ge=50, le=1000)
+    overlap: int = Field(30, ge=0)
+    submission_key: str = Field(min_length=1)
+    generation: str = Field(min_length=1)
 class RetrieveRequest(BaseModel):
     question: str | None = None
     k: int = Field(3, ge=1, le=10)
@@ -37,7 +39,6 @@ class EvalRequest(BaseModel):
     cases: list[EvalCase] = Field(min_length=1)
     mode: Literal["rag", "direct", "both"]
     k: int = Field(3, ge=1, le=10)
-
 class Citation(BaseModel):
     ref: int | str
     chunk_id: str
@@ -51,7 +52,6 @@ class Citation(BaseModel):
     score_stage: str
     kind: str
     verified: bool
-
 class Envelope(BaseModel):
     code: int = 0
     message: str = "success"
