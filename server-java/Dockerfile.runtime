@@ -1,0 +1,17 @@
+# 运行时镜像：直接用宿主机已经打好的 jar，不在容器里跑 Maven。
+#
+# 为什么需要这个文件：maven:3.9.9-eclipse-temurin-21 这类构建基础镜像在受限网络下
+# 经常拉不下来（镜像站限流 / short read: unexpected EOF）。而 jar 在宿主机上
+# `mvn -DskipTests package` 就能产出，容器里只需要一个 JRE。
+#
+# 构建前提（在仓库根执行）：
+#   cd server-java && mvn -q -DskipTests package
+# 产物：server-java/target/xiaoyi-rag-server-0.1.0-SNAPSHOT.jar
+#
+# 用法（由 deploy/docker-compose.localdb-prebuilt.yml 调用，context 是仓库根）：
+#   docker build -f server-java/Dockerfile.runtime -t xiaoyi-java:local .
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY server-java/target/xiaoyi-rag-server-0.1.0-SNAPSHOT.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

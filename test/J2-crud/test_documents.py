@@ -389,8 +389,13 @@ def test_upload_marks_indexed_documents_stale(java_client, clean_db, clean_stora
     assert row[0] == "NEEDS_REBUILD", f"语料变了应把索引标脏，实际 {row[0]}"
 
 
-def test_storage_root_is_inside_server_java(java_client, clean_db, clean_storage):
-    """落盘根目录必须在 server-java 之下，防止误配到仓库根污染工作区。"""
-    assert STORAGE_ROOT.name == "storage", STORAGE_ROOT
-    assert STORAGE_ROOT.parent.name == "server-java", STORAGE_ROOT
-    assert Path(STORAGE_ROOT).is_dir(), STORAGE_ROOT
+def test_storage_root_is_inside_repository(java_client, clean_db, clean_storage):
+    """落盘根目录必须在仓库内、且是独立子目录，防止误配到仓库根污染工作区。
+
+    默认值是 `server-java/storage`；门禁把它指到 `test-artifacts/gate-storage`，
+    两者都满足「在仓库内 + 不是仓库根」，所以这里断言语义而不是字面路径。
+    """
+    root = Path(STORAGE_ROOT).resolve()
+    assert root != REPO_ROOT.resolve(), f"落盘根目录不能是仓库根：{root}"
+    assert REPO_ROOT.resolve() in root.parents, f"落盘根目录必须在仓库内：{root}"
+    assert root.is_dir(), root

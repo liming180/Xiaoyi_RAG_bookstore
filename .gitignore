@@ -22,6 +22,8 @@ test-artifacts/
 .env.local
 .env.*.local
 config.local.json
+# 本机 MySQL 模式的实际凭据（模板 deploy/local-mysql.env.example 进版本库）
+deploy/local-mysql.env
 
 # ---- Python ----
 __pycache__/
@@ -50,3 +52,5 @@ exports/
 # 第二条兜住「从仓库根起 java」时 ./storage 落到根上的情况——那是配置错位，不该进库。
 server-java/storage/
 /storage/
+# pytest 跑 Python 侧时 STORAGE_ROOT 默认落到 test/storage/（含 ai-state.sqlite3）。
+test/storage/

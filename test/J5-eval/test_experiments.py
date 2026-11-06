@@ -47,7 +47,8 @@ def test_experiment_skips_invalid_overlap_and_blocks_conflicts(api, java_client,
 @pytest.mark.parametrize('axes,code', [
     ({'chunkSize': [100], 'overlap': [100, 200], 'k': [1], 'rerank': [True], 'summary': [False]}, 40004),
     ({'chunkSize': [], 'overlap': [0], 'k': [1], 'rerank': [True], 'summary': [False]}, 40004),
-    ({'chunkSize': [1], 'overlap': [0], 'k': [1], 'rerank': [True], 'summary': [False]}, 40001),
+    # chunkSize 越界按契约回 40002（不是 40001），见 docs/api/error-codes.md 的编号分配说明。
+    ({'chunkSize': [1], 'overlap': [0], 'k': [1], 'rerank': [True], 'summary': [False]}, 40002),
 ])
 def test_invalid_experiment(java_client, axes, code):
     response = java_client.post('/api/v1/eval/experiments', json={'axes': axes, 'questionIds': ['T03']})

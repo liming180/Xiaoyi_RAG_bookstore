@@ -14,6 +14,7 @@ docs/
 ├─ 01-功能规格/    指导书 F1~F11 逐条功能规格 + 提示词汇总 + 验收清单   ← 先读这里知道要做什么
 ├─ 02-技术栈/      用了什么、什么版本、为什么不用别的                     ← 知道用什么做
 ├─ 02-重构设计/    ★ v2 架构规格 + 前端/后端/RAG 三份设计 + 两份开发提示词  ← 重构的唯一事实来源
+├─ 03-架构评审/    架构快照 + 企业级评分基线 + 评审提示词 + 评审结论      ← 判断"够不够企业级"
 └─ 99-v1归档/      v1 后端（Python 单体 app/）的 9 份设计与依赖文档       ← 只作「改造前」对照
 ```
 
@@ -30,6 +31,7 @@ docs/
 | `01-功能规格` | 「要做到什么」 | 从指导书任务出发，按 F 编号查 |
 | `02-技术栈` | 「用什么做」 | 一张总表看全貌，一份前端明细查版本与约束 |
 | `02-重构设计` | 「架构怎么定」 | 00 规格看全局，三份展开文档看前端/后端/RAG，两份提示词按阶段施工 |
+| `03-架构评审` | 「够不够企业级」 | 先跑快照脚本，再按 8 维度基线打分，最后分三轮让 LLM 评审 |
 | `99-v1归档` | 「改造前长什么样」 | 只在需要对照或写报告「改造前后」时查 |
 
 ## 二、全部文档索引
@@ -76,6 +78,23 @@ docs/
 | [03_前端开发提示词.md](02-重构设计/03_前端开发提示词.md) | P1–P6 分阶段开发手册与每阶段门禁（**已全部执行完毕**） |
 | [04_后端开发提示词.md](02-重构设计/04_后端开发提示词.md) | **旧后端清除清单 + 技术栈启动顺序（Java 先）+ 根 `test/` 规范 + J0→J6/A1→A3 分阶段提示词与门禁**（待执行） |
 
+### 03-架构评审（5 份 + 1 脚本）
+
+判断「这套架构够不够企业级」。核心思路：**机器出事实，人出标准，LLM 只做判断**。
+
+| 文档 | 一句话 |
+| --- | --- |
+| [README.md](03-架构评审/README.md) | 方法论：为什么直接问 LLM 会失败 + 三步法 + 四个防注水技巧 |
+| [01_企业级基线.md](03-架构评审/01_企业级基线.md) | **8 维度 × 0–3 分评分表**（分层/契约/数据/安全/可观测/容错/可测/交付），每档都有「什么证据才算」 |
+| [02_评审提示词.md](03-架构评审/02_评审提示词.md) | P1 架构符合性 / P2 后端完善度 / P3 前端完善度，三段可复制提示词（通用模板，含占位符） |
+| [04_可直接粘贴的提示词.md](03-架构评审/04_可直接粘贴的提示词.md) | **本仓库专用版**，路径已写死，复制即执行；含 P0 开场自检、P4 最小版、P5 重构对比、纯聊天窗口版 |
+| [05_P2P3_已填入P1结论.md](03-架构评审/05_P2P3_已填入P1结论.md) | P2 后端 / P3 前端提示词，P1 结论（14/24 + 3 个 P0）已内嵌，直接复制 |
+| [06_后端施工单.md](03-架构评审/06_后端施工单.md) | **诊断转施工**：先定单用户/多用户，再三波次推进；第一波含可复制施工单与四项验收 |
+| [07_前后端契约差异清单.md](03-架构评审/07_前后端契约差异清单.md) | **P0–P8 契约适配的落地记录**：8 个维度的旧/新行为对照 + A–G 验收结果 + 12 条验收期间修掉的真实缺陷 |
+| [03_首轮评审结论.md](03-架构评审/03_首轮评审结论.md) | 实测结论 **14/24 分**，3 个 P0（资料越权、后门 token、Python 全局状态）均带行号 |
+| [snapshot/架构快照.md](03-架构评审/snapshot/架构快照.md) | 机器生成，**不要手改**；约 293 行覆盖三端规模/端点/依赖/测试/反模式 |
+| `tools/arch_snapshot.py` | 快照生成器，零依赖，`python tools/arch_snapshot.py` 直接跑 |
+
 ### 99-v1归档（9 份）
 
 > ⚠️ 全部加「v1 历史归档（2026-11-01）」警示块，**不作为现行实现依据**。源码归档在 `.snapshots/_archive/v1-backend-removed-20261101`。
@@ -115,6 +134,103 @@ cd frontend; npm run regress; cd ..            # 10 场景 CDP 回归
 ```
 
 > v1 的 `run.cmd` / `py -3.12 -m app.api` / `tools\selfcheck.py` 已随旧后端删除。
+
+#### 路线 A 补充：本机 MySQL 直连（不涉及 Docker 的最快路径）
+
+`deploy/docker-compose.yml` 是交付形态，但它要求能拉到 `mysql:8.0` / `python:3.12-slim` / `maven` 等基础镜像。**拉不到镜像不等于跑不起来**：三个服务本来就可以直连本机已装好的 MySQL 8.0，表结构完全由 Java 启动时的 Flyway 迁移建立，不需要手工执行任何 `.sql`。如果要求服务确实在容器里，见下面的「路线 A 之二」。
+
+```powershell
+# 0) 一次性准备：本机已装 MySQL 8.0 并在 3306 监听
+copy deploy\local-mysql.env.example deploy\local-mysql.env
+#    填 MYSQL_PASSWORD，以及用 openssl rand -base64 48 / openssl rand -hex 32 生成的
+#    AUTH_JWT_SECRET 与 INTERNAL_TOKEN；deploy/local-mysql.env 已被 .gitignore 忽略。
+
+# 1) 建库（只 CREATE DATABASE IF NOT EXISTS，不建表）
+python tools\local_mysql.py prepare
+
+# 2) 起栈：Python(8000) + Java(8080)，Java 启动时 Flyway 自动跑 V1–V7
+python tools\local_mysql.py up --timeout 180
+
+# 3) 验收：双账号登录 + 13 张表 + Flyway 全 success，报告落 test-artifacts/local-mysql-verify.json
+python tools\local_mysql.py verify
+
+# 4) 端到端：上传 → 建库 → 轮询终态 → 断言 A/B 片段互不可见
+python tools\local_mysql_smoke.py
+
+# 5) 收工（只停本工具起的进程，不停 MySQL，不删库）
+python tools\local_mysql.py down
+# 需要重来一遍时：python tools\local_mysql.py drop-db --yes
+```
+
+要点：
+
+- **表结构来源唯一**：`server-java/src/main/resources/db/migration/V1–V7`。`prepare` 只负责建空库，`up` 之后日志里应出现 `Successfully applied 7 migrations to schema ... now at version v7`，`verify` 会核对 13 张表（含 `flyway_schema_history`）。不要手工 `source` 迁移 SQL —— 那会让 Flyway 的校验和对不上。
+- **库名必须独立**：默认 `xiaoyi_rag_local_gate`，脚本强制以 `_gate` / `_test` 结尾，避免误连开发库 `xiaoyi_rag`。
+- **密钥是硬门槛**：`AUTH_JWT_SECRET` ≥ 32 UTF-8 字节、`INTERNAL_TOKEN` 非空、bootstrap 口令 12–72 字节，缺一个 `prepare` 就报错退出。这跟 Compose 里 `${AUTH_JWT_SECRET:?...}` 的 fail-fast 是同一条约束。
+- **两档 provider**：`AI_MOCK=false` 走真实 Python（J0/J1/J2/J4/J6/J7/A1 用它跑）；`AI_MOCK=true` 用 Java 内置 MockAiClient（J3/J5 依赖它的 `[fail]` 标记与关键词打分）。
+- **阶段节拍**：`INGEST_STAGE_DELAY_MS=1200` 给黑盒用例留出观测窗口（Java 侧 1s 轮询一次，低于 1000 会漏掉 `splitting/embedding/summarizing` 三个中间阶段）。生产/演示可以设 0 全速。
+- **profile**：`P7_SPRING_PROFILES=gate-probe`（默认）才注册 `/__gate/throw`，J1 的「错误码 → HTTP 状态码」用例靠它真的走一遍 `GlobalExceptionHandler`；跑纯业务实例时显式设空值。
+
+#### 路线 A 之二：Docker 起整套服务 + 宿主机 MySQL（2026-11-06 实测通过）
+
+上一节是「全部跑在本机进程里」。如果要求三个服务确实在容器里、只有数据库在宿主机，用预构建镜像这份 compose —— 它不拉 `mysql:8.0`、也不在容器里跑 Maven / `npm ci`，只依赖三个能拉到的运行期基础镜像（`python:3.12-slim`、`eclipse-temurin:21-jre`、`nginx:1.27-alpine`）。
+
+```powershell
+# 1) 宿主机一次性准备
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS xiaoyi_rag_local_gate CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+python tools\local_mysql_grant_container.py     # 建 xiaoyi@'%' 并只授该库
+cd server-java; mvn -q -DskipTests package; cd ..
+cd frontend; npm run build:only; cd ..
+
+# 2) 起栈（三个容器 + 一个 ai-state 卷）
+$env:MYSQL_USER_FOR_CONTAINER = 'xiaoyi'
+docker compose -f deploy/docker-compose.localdb-prebuilt.yml --env-file deploy/local-mysql.env up -d --build
+
+# 3) 验收
+docker compose -f deploy/docker-compose.localdb-prebuilt.yml --env-file deploy/local-mysql.env ps
+python tools\compose_smoke.py                   # 走 nginx:8088，报告落 test-artifacts/compose-smoke.json
+
+# 4) 收工（保留 ai-state 卷）
+docker compose -f deploy/docker-compose.localdb-prebuilt.yml --env-file deploy/local-mysql.env down
+```
+
+三份 compose 的分工：
+
+| 文件 | 数据库 | Java/前端怎么来 | 适用场景 |
+| --- | --- | --- | --- |
+| `deploy/docker-compose.yml` | `mysql:8.0` 容器 | 容器内 Maven 构建 + `npm ci` | 交付形态，**本机已实测通过**（169s，含 Flyway 从空库跑完 V1–V7） |
+| `deploy/docker-compose.localdb.yml` | 宿主机 8.0.39 | 容器内 Maven 构建 + `npm ci` | 能拉 `maven`、拉不到 `mysql:8.0` 时用；**已实测通过**（`mvn package` 首次 379s，缓存后整套 build 约 3 分钟） |
+| `deploy/docker-compose.localdb-prebuilt.yml` | 宿主机 8.0.39 | `Dockerfile.runtime` 拷宿主机 jar/dist | **日常首选**，秒级起栈（18.7s） |
+| （无 compose）`tools/local_mysql.py` | 宿主机 8.0.39 | 本机进程，不涉及 Docker | 只要跑门禁、不需要容器 |
+
+三份 compose 用同一个入口脚本，不必记命令：
+
+```powershell
+python tools\docker_deploy.py up --smoke                        # 默认 prebuilt（推荐）
+python tools\docker_deploy.py --mode full up --smoke            # 容器内构建 + 宿主机库
+python tools\docker_deploy.py --mode stack up --smoke           # 连 mysql:8.0 容器（不要加 --prepare-db）
+python tools\docker_deploy.py status                            # 容器状态
+python tools\docker_deploy.py down                              # 停栈，保留 ai-state 卷
+python tools\docker_deploy.py build --push --registry registry.example.com/team --tag v1.0.0
+```
+
+`push` 只做 tag + push + 校验远端 digest，不会启动容器栈；没有 `--registry`/`IMAGE_REGISTRY` 时直接报错退出。已用本机临时 `registry:2` 实测：三个镜像推到 `127.0.0.1:5000/xiaoyi/xiaoyi-{python-ai,java-backend,frontend}:smoke`，`GET /v2/_catalog` 与 `tags/list` 都能查到，digest 与 `buildx imagetools inspect` 一致（证据在 `test-artifacts/docker-deploy-prebuilt.json` 的 `pushedImages`）。
+
+每次运行都写 `test-artifacts/docker-deploy-<mode>.json`（含耗时、镜像映射、容器健康、冒烟结果，不写任何口令）。`prebuilt` 模式会先跑 `mvn verify` + `npm run gate -- prebuilt --build`，除非加 `--skip-host-build`。
+
+三份都已用 `docker compose --env-file deploy/local-mysql.env config --quiet` 校验通过，且都实跑过一遍：`prebuilt` 2.1s、`full` 22.3s（不含首次 379s 的 Maven 构建）、`stack` 169s（含 mysql 容器初始化 + 7 个迁移）。`stack` 模式下 `compose_smoke.py` 自动加 `--db-via-container`，走 `compose exec mysql` 查库（mysql 容器不发布 3306）。
+
+要点：
+
+- **必须带 `--env-file`**：`docker compose ps` / `config` 也要带，否则报 `required variable AUTH_JWT_SECRET is missing a value` —— 那些 `${VAR:?}` 是故意 fail-fast 的。
+- **容器不能连 `root@localhost`**：`local-mysql.env` 里的 `MYSQL_USER=root` 只匹配 localhost，容器来源是 Docker 网关。`tools/local_mysql_grant_container.py` 建 `xiaoyi@'%'` 并只授 `xiaoyi_rag_local_gate.*`，compose 里默认 `${MYSQL_USER_FOR_CONTAINER:-xiaoyi}`。
+- **`stack` 模式的 mysql 容器也拒绝 `MYSQL_USER=root`**：镜像 entrypoint 直接报 `MYSQL_USER and MYSQL_PASSWORD are for configuring a regular user and cannot be used for the root user` 并退出 1。所以 `deploy/docker-compose.yml` 的 mysql 与 java-backend 都用 `${MYSQL_USER_FOR_CONTAINER:-xiaoyi}`，root 只靠 `MYSQL_ROOT_PASSWORD` 初始化；`local-mysql.env` 里要同时给 `MYSQL_USER_FOR_CONTAINER` 与 `MYSQL_ROOT_PASSWORD`。
+- **healthcheck 不能用 `/dev/tcp`**：`eclipse-temurin:21-jre` 的 `/bin/sh` 是 dash，`exec 3<>/dev/tcp/...` 会报 `Directory nonexistent`、容器恒 unhealthy 并卡住 frontend。改用镜像里已有的 `curl -fsS http://127.0.0.1:8080/api/v1/health`，冷启动实测 49.3s，故 `start_period: 90s`。
+- **`frontend/Dockerfile.runtime.dockerignore` 不能少**：`frontend/.dockerignore` 第 2 行排除了 `dist`，BuildKit 会把它套到 `Dockerfile.runtime` 上，报 `failed to compute cache key: "/dist": not found`。
+- **`INGEST_STAGE_DELAY_MS` 要给到 python-ai**：这个变量只被 `server-ai/app/config.py` 读取，Java 不读；只给 java-backend 时 J4 的五阶段用例只看到 `parsing` 与 `done`。
+- **`SPRING_PROFILES_ACTIVE=gate-probe`**：不设则 `GateProbeController` 不注册，J1 十条错误码用例全 404。
+- **Windows 系统代理**：`httpx` 会读 `HKCU\...\Internet Settings` 的 `ProxyServer=127.0.0.1:7890`（`ProxyOverride` 里的 `127.*` 对 httpx 不生效），未设 `NO_PROXY=127.0.0.1,localhost` 时 pytest 打 `127.0.0.1:8080` 会拿到 502。
+- **容器内构建靠 `maven` 基础镜像，网络波动就会整段失败**：`server-java/Dockerfile:7` 的 `RUN mvn -q -DskipTests package` 首次曾报 `DependencyResolutionException`，隔一会儿重试即成功（同一份 Dockerfile、同一台机器）。依赖层一旦进了 BuildKit 缓存，后续 `--build` 只重跑变更层。日常用 `--mode prebuilt` 绕开这一步。
 
 ### 路线 B：我要答辩，得能解释代码
 
@@ -203,6 +319,7 @@ D:\VM1\Xiaoyi_RAG_bookstore\
 3. **编码统一 UTF-8**：`.py/.md/.json/.ts/.vue` 无 BOM + LF；`questions.csv` / `keywords.csv` / 导出 CSV 带 BOM（Excel 需要）。
    ⚠️ 不要用 PowerShell `Set-Content -Encoding utf8` 写文件（会加 BOM，Vite 读 `package.json` 直接报错）。
 4. **索引原子写**：v1 是 `index.json` 先写同目录临时文件再 `replace`；v2 由 Milvus Lite + MySQL 事务承担。
-5. **契约唯一源头**：`docs/api/openapi-public.yaml` 与 `openapi-internal.yaml`（J0 阶段产出）→ 三端各自生成类型，禁止手改漂移。
+5. **契约唯一源头**：`docs/api/openapi-public.yaml` 与 `openapi-internal.yaml` → 三端各自生成类型，禁止手改漂移。
 6. **改了资料或分块参数必须重建索引**；前端常量 `CHUNK_SIZE_DEFAULT=180` / `OVERLAP_DEFAULT=30` 只作表单默认值，**以 manifest 实际值为准**。
-7. **mock 档是默认档**：v2 的 `mock provider` 是联调契约的一部分（Python 全链路可切 mock，无密钥也能跑通三端），CI 依赖它。
+7. **mock 档是默认档**：v2 的 `mock provider` 是联调契约的一部分；mock 通过不代表真实 RAG 检索质量已验收，A2/A3 单独验收。
+8. **真实启动必须注入密钥**：`AUTH_JWT_SECRET` 至少 32 个 UTF-8 字节，`INTERNAL_TOKEN` 必须显式设置；示例生成：`openssl rand -base64 48`、`openssl rand -hex 32`。Compose 缺少任一密钥时应在配置阶段失败。

@@ -67,8 +67,8 @@ paths:
       tags: [鉴权]
       summary: 登录换取 JWT
       description: |
-        演示环境用户名任意非空即可（`demo` 映射到「演示用户」）。
-        `username` 为空 → `40001`。
+        登录必须使用由部署配置或测试初始化创建的账号，并校验数据库中的密码哈希。
+        未知账号、错误密码或空白字段均返回统一认证错误；系统不提供公开注册或任意用户名认领身份。
       security: []
       requestBody:
         required: true
@@ -1780,6 +1780,7 @@ components:
       enum: [parsing, splitting, embedding, summarizing, done]
 
     IndexTask:
+      description: '公开任务视图不暴露内部 submission_key、generation 或 X-User-Id。'
       type: object
       required: [id, status, stage, progress, chunkSize, overlap, docCount, chunkCount, startedAt, finishedAt]
       additionalProperties: false

@@ -781,7 +781,7 @@ components:
 
     InternalParseRequest:
       type: object
-      required: [documents, chunk_size, overlap]
+      required: [documents, chunk_size, overlap, submission_key, generation]
       additionalProperties: false
       properties:
         documents:
@@ -796,6 +796,14 @@ components:
         overlap:
           type: integer
           minimum: 0
+        submission_key:
+          type: string
+          minLength: 1
+          description: 'Java 生成的用户级幂等键；同一用户同一 key 重试必须回到同一个 task_id。'
+        generation:
+          type: string
+          minLength: 1
+          description: 'Java 生成的索引代际；任务成功时用它决定当前生效片段。'
 
     ParseAccepted:
       type: object
@@ -810,7 +818,7 @@ components:
 
     IngestTask:
       type: object
-      required: [task_id, status, stage, progress, doc_count, chunk_count]
+      required: [task_id, status, stage, progress, doc_count, chunk_count, chunks]
       additionalProperties: false
       properties:
         task_id:
@@ -841,6 +849,39 @@ components:
           oneOf:
             - type: integer
             - type: 'null'
+        chunks:
+          type: array
+          description: '本项目扩展：仅 SUCCEEDED 时回传本次任务的切片，Java 据此落 chunk 表；其余状态给空数组。'
+          items:
+            $ref: '#/components/schemas/InternalChunkItem'
+
+    InternalChunkItem:
+      type: object
+      required: [chunk_id, doc_id, doc_title, heading_path, text, start, end, kind, verified]
+      additionalProperties: false
+      description: 'Java AiChunk 的线上形状；字段名 snake_case，由 RealAiServiceClient 转 camelCase。'
+      properties:
+        chunk_id:
+          type: string
+          pattern: '^D\d{2}-C\d{3}$'
+        doc_id:
+          type: string
+        doc_title:
+          type: string
+        heading_path:
+          type: string
+        text:
+          type: string
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        kind:
+          $ref: '#/components/schemas/ChunkKind'
+        verified:
+          type: boolean
 
     DocumentStatus:
       type: object

@@ -1,0 +1,122 @@
+# 用 Docker 起整套服务，但两处都避开受限网络的构建：
+#   1) 数据库用宿主机已装的 MySQL 8.0.39，不起 mysql 容器；
+#   2) java-backend / frontend 用宿主机已构建好的 jar 与 dist（Dockerfile.runtime），
+#      容器里不跑 Maven、不跑 npm ci。
+#
+# 为什么不用 deploy/docker-compose.yml：那里 java-backend 的构建阶段要
+# maven:3.9.9-eclipse-temurin-21（约 500MB），frontend 构建阶段要 npm ci，
+# 镜像站限流时经常 short read 中断。本文件只依赖三个能拉到的运行期基础镜像：
+#   python:3.12-slim / eclipse-temurin:21-jre / nginx:1.27-alpine
+#
+# 前置步骤（都在宿主机上做一次）：
+#   1. 建空库（表结构由 Java 启动时 Flyway V1–V7 建立）：
+#        mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS xiaoyi_rag_local_gate
+#                             CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+#   2. 建容器可用的 MySQL 账号（容器来源是 Docker 网关，root@localhost 匹配不上）：
+#        python tools/local_mysql_grant_container.py
+#   3. 打 jar 与 dist：
+#        cd server-java && mvn -q -DskipTests package && cd ..
+#        cd frontend && npm run build:only && cd ..
+#
+# 启动：
+#   docker compose -f deploy/docker-compose.localdb-prebuilt.yml \
+#                  --env-file deploy/local-mysql.env up -d --build
+#
+# 查看：
+#   docker compose -f deploy/docker-compose.localdb-prebuilt.yml ps
+#   docker compose -f deploy/docker-compose.localdb-prebuilt.yml logs -f java-backend
+#
+# 停止（保留 ai-state 卷）：
+#   docker compose -f deploy/docker-compose.localdb-prebuilt.yml down
+#
+# 停止并清掉卷：
+#   docker compose -f deploy/docker-compose.localdb-prebuilt.yml down -v
+
+services:
+  python-ai:
+    build:
+      context: ../server-ai
+      dockerfile: Dockerfile
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      STORAGE_ROOT: /var/lib/xiaoyi-ai
+      # 阶段停顿只由 Python 侧生效（server-ai/app/config.py 的 ingest_stage_delay_ms），
+      # Java 不读这个变量。默认 1200 > Java 的 1s 轮询周期，否则
+      # splitting/embedding/summarizing 三个阶段在两次轮询之间就跑完了，
+      # J4 的 test_task_stage_visits_all_five_values 会报「这些 stage 没被观察到」。
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+    volumes:
+      - ai-state:/var/lib/xiaoyi-ai
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/internal/v1/health', headers={'X-Internal-Token': os.environ['INTERNAL_TOKEN']}); urllib.request.urlopen(req, timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  java-backend:
+    build:
+      context: ..
+      dockerfile: server-java/Dockerfile.runtime
+    environment:
+      AI_SERVICE_URL: http://python-ai:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is required (min 32 bytes)}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-xiaoyi-rag}
+      # 账号只能由部署方显式投放（AuthAccountBootstrap），没有公开注册接口。
+      AUTH_BOOTSTRAP_USERNAME: ${AUTH_BOOTSTRAP_USERNAME:-}
+      AUTH_BOOTSTRAP_PASSWORD: ${AUTH_BOOTSTRAP_PASSWORD:-}
+      AUTH_SECONDARY_BOOTSTRAP_USERNAME: ${AUTH_SECONDARY_BOOTSTRAP_USERNAME:-}
+      AUTH_SECONDARY_BOOTSTRAP_PASSWORD: ${AUTH_SECONDARY_BOOTSTRAP_PASSWORD:-}
+      AI_MOCK: "false"
+      # gate-probe 才注册 GateProbeController 的 /__gate/throw，J1 的十条错误码用例
+      # 靠它逐个触发业务码。跑纯业务实例时把它设成空串。
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-gate-probe}
+      # 资料落盘目录挂到宿主机 server-java/storage：pytest 的
+      # 「磁盘上应有 server-java/storage/<id>/<name>」断言要求两侧路径对应。
+      STORAGE_ROOT: /app/storage
+      # 关键差异：连宿主机 3306，不是 mysql 容器。
+      MYSQL_HOST: ${MYSQL_HOST_FOR_CONTAINER:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE is required}
+      # local-mysql.env 里的 MYSQL_USER=root 只能从 localhost 登录；
+      # 容器必须用 tools/local_mysql_grant_container.py 建的 '%' 账号。
+      MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+    volumes:
+      - ../server-java/storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      python-ai:
+        condition: service_healthy
+    ports:
+      - "${JAVA_PORT:-8080}:8080"
+    healthcheck:
+      # eclipse-temurin:21-jre 里有 curl（/usr/bin/curl），但 /bin/sh 是 dash，
+      # 不支持 bash 的 /dev/tcp 重定向，所以这里必须用 curl 而不是 exec 3<>/dev/tcp。
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      # 首次启动要跑完 Flyway + Hibernate，实测 50 秒左右，给足冷启动窗口。
+      start_period: 90s
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.runtime
+      # 运行期镜像不跑 npm，但会校验 dist 里内联的 API base 与这里一致，
+      # 防止把 dev 构建产物装进生产镜像。
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api/v1}
+    depends_on:
+      java-backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+
+volumes:
+  ai-state:

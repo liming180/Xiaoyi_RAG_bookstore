@@ -34,8 +34,17 @@ FIXTURES = TEST_DIR / "fixtures"
 BASE_JAVA = os.getenv("BASE_JAVA", "http://127.0.0.1:8080")
 BASE_AI = os.getenv("BASE_AI", "http://127.0.0.1:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "dev-internal-token")
-#: 对外接口的开发态 Bearer；J2 换成真签发 JWT 后只需改这里。
-JAVA_TOKEN = os.getenv("JAVA_TOKEN", "dev-token")
+
+#: H1 之后 Java 只认签名 JWT，`dev-token` 这类固定串一律 40100。
+#: 令牌来源按优先级：显式 `JAVA_TOKEN` → 用下面的账号密码现登一次。
+JAVA_TOKEN = os.getenv("JAVA_TOKEN") or ""
+JAVA_USERNAME = os.getenv("JAVA_USERNAME", "gate-a")
+JAVA_PASSWORD = os.getenv("JAVA_PASSWORD", "")
+JAVA_USERNAME_B = os.getenv("JAVA_USERNAME_B", "gate-b")
+JAVA_PASSWORD_B = os.getenv("JAVA_PASSWORD_B", "")
+
+#: 登录结果的进程内缓存：同一账号只登一次，避免每个用例都跑一遍 BCrypt(12)。
+_TOKEN_CACHE: dict[tuple[str, str], str] = {}
 
 #: 数据库连接：口令一律走用户级环境变量 `MYSQL_PASSWORD`，仓库里不出现明文。
 #: 默认值与本机 MySQL80（3306）+ `xiaoyi_rag` 库对齐，见 docs/README.md 关键约定第 1 条。
@@ -155,18 +164,74 @@ def internal_token() -> str:
     return INTERNAL_TOKEN
 
 
-@pytest.fixture(scope="session")
-def java_client():
-    """指向 Java 的 httpx.Client（带开发态 Bearer）。
+def login(username: str, password: str) -> str:
+    """用真实账号密码换一次 JWT，进程内按 (账号, 口令) 缓存。
 
-    J1 起 AuthInterceptor 要求 `Authorization: Bearer <token>`，
-    J2 会把 token 换成真签发的 JWT，这里先固定 dev 值。
+    为什么要现登而不是塞一个固定串：H1 之后 `AuthInterceptor` 只认 HS256 签名令牌，
+    任何写死的 `dev-token` 都会被 40100 拒掉；而每个用例都跑一遍 BCrypt(12) 会让
+    J2/J3 慢到不可接受，所以只登一次。
     """
+    httpx = pytest.importorskip("httpx", reason="需要 httpx")
+    key = (username, password)
+    cached = _TOKEN_CACHE.get(key)
+    if cached:
+        return cached
+    with httpx.Client(base_url=BASE_JAVA, timeout=30.0) as client:
+        response = client.post(
+            "/api/v1/auth/login", json={"username": username, "password": password}
+        )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"登录 {username} 失败：HTTP {response.status_code} {response.text[:200]}；"
+            "请确认服务已用 AUTH_BOOTSTRAP_USERNAME/AUTH_BOOTSTRAP_PASSWORD 建好账号"
+        )
+    payload = response.json()
+    if payload.get("code") != 0:
+        raise RuntimeError(f"登录 {username} 失败：{payload}")
+    token = payload["data"]["token"]
+    _TOKEN_CACHE[key] = token
+    return token
+
+
+def default_token() -> str:
+    """对外接口的默认 Bearer：显式 `JAVA_TOKEN` 优先，否则用账号 A 现登。"""
+    if JAVA_TOKEN:
+        return JAVA_TOKEN
+    return login(JAVA_USERNAME, JAVA_PASSWORD)
+
+
+@pytest.fixture(scope="session")
+def token_a() -> str:
+    """账号 A 的 JWT（隔离用例里的「本人」）。"""
+    return default_token()
+
+
+@pytest.fixture(scope="session")
+def token_b() -> str:
+    """账号 B 的 JWT（隔离用例里的「别人」）。"""
+    return login(JAVA_USERNAME_B, JAVA_PASSWORD_B)
+
+
+@pytest.fixture(scope="session")
+def java_client(token_a):
+    """指向 Java 的 httpx.Client，带账号 A 的真实 JWT。"""
     httpx = pytest.importorskip("httpx", reason="需要 httpx")
     with httpx.Client(
         base_url=BASE_JAVA,
         timeout=60.0,
-        headers={"Authorization": f"Bearer {JAVA_TOKEN}"},
+        headers={"Authorization": f"Bearer {token_a}"},
+    ) as client:
+        yield client
+
+
+@pytest.fixture(scope="session")
+def java_client_b(token_b):
+    """指向 Java 的 httpx.Client，带账号 B 的真实 JWT。"""
+    httpx = pytest.importorskip("httpx", reason="需要 httpx")
+    with httpx.Client(
+        base_url=BASE_JAVA,
+        timeout=60.0,
+        headers={"Authorization": f"Bearer {token_b}"},
     ) as client:
         yield client
 
@@ -230,7 +295,7 @@ def _parse_sse(text: str, event_cls):
 
 def read_sse(
     payload: dict[str, Any],
-    token: str | None = JAVA_TOKEN,
+    token: str | None = None,
     path: str = "/api/v1/chat/stream",
     timeout: float = 60.0,
 ) -> tuple[int, str, list[Any], str]:
@@ -239,13 +304,16 @@ def read_sse(
     为什么不用 `httpx_sse.connect_sse`：它在响应不是 `text/event-stream` 时直接抛异常，
     而 J3 的失败分支（400 / 401 / 404）恰恰要读状态码与 JSON 信封。这里先普通 POST 拿全量响应，
     再按 Content-Type 决定要不要解事件 —— 两条路径都能断言。
+
+    `token` 省略时用账号 A 现登的 JWT（不是模块导入期的快照，避免缓存住过期令牌）。
     """
     httpx = pytest.importorskip("httpx", reason="需要 httpx")
     httpx_sse = pytest.importorskip("httpx_sse", reason="需要 httpx-sse")
 
     headers = {"Accept": "text/event-stream"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    bearer = token if token is not None else default_token()
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
 
     with httpx.Client(base_url=BASE_JAVA, timeout=timeout) as client:
         response = client.post(path, json=payload, headers=headers)
@@ -266,7 +334,7 @@ def read_sse(
 def sse_stream():
     """读取 `POST /api/v1/chat/stream` 并返回事件列表的可调用对象。
 
-    默认带上开发态 Bearer（`/chat/stream` 不在 AuthInterceptor 白名单里，不带必 401）。
+    默认带账号 A 的 JWT（`/chat/stream` 不在 AuthInterceptor 白名单里，不带必 401）。
     需要看 HTTP 状态码与 Content-Type 时用 `read_sse()`。
     """
     pytest.importorskip("httpx", reason="需要 httpx")
@@ -274,7 +342,7 @@ def sse_stream():
 
     def _stream(
         payload: dict[str, Any],
-        token: str | None = JAVA_TOKEN,
+        token: str | None = None,
         path: str = "/api/v1/chat/stream",
     ) -> list[Any]:
         status, _content_type, events, text = read_sse(payload, token=token, path=path)
@@ -300,14 +368,42 @@ def _clear_storage() -> None:
             entry.unlink(missing_ok=True)
 
 
+#: 允许被清空的库名后缀。门禁用 `xiaoyi_rag_gate`，开发库 `xiaoyi_rag` 永远不在名单里。
+GATE_DB_SUFFIX = "_gate"
+
+
+def destructive_allowed() -> tuple[bool, str]:
+    """判断当前配置是否允许执行 DELETE / 清盘这类破坏性清理。
+
+    为什么需要这道闸：`clean_db` 会 `DELETE FROM` 十张表并清空 `STORAGE_ROOT`。
+    早期版本没有任何守卫，只要有人把 `MYSQL_DATABASE` 指到开发库、又在 IDE 里点一下
+    「跑全部用例」，本地资料就会当场消失。规则只有两条，都要求显式满足：
+
+    1. 库名以 `_gate` 结尾（`xiaoyi_rag_gate`），或 `XIAOYI_TEST_ALLOW_RESET` 精确等于库名；
+    2. `STORAGE_ROOT` 必须落在仓库目录内，避免误删仓库外的目录。
+
+    返回 `(是否允许, 原因)`，原因用于 skip 信息，方便定位「为什么用例没清库」。
+    """
+    if not DB_NAME.endswith(GATE_DB_SUFFIX) and os.getenv("XIAOYI_TEST_ALLOW_RESET") != DB_NAME:
+        return False, (
+            f"库 {DB_NAME!r} 不是门禁库（应以 {GATE_DB_SUFFIX!r} 结尾），"
+            "拒绝执行破坏性清理；门禁请用 MYSQL_DATABASE=xiaoyi_rag_gate"
+        )
+    try:
+        STORAGE_ROOT.relative_to(REPO_ROOT)
+    except ValueError:
+        return False, f"STORAGE_ROOT {STORAGE_ROOT} 不在仓库内，拒绝清盘"
+    return True, ""
+
+
 def reset_ingest_state() -> bool:
     """清空建库相关状态：`chunk` / `index_task` / `document` 三张表 + `storage/` 下的资料文件。
 
-    返回是否真的执行了（没装 pymysql 或连不上库时返回 False）。
+    返回是否真的执行了（没装 pymysql、连不上库、或目标不是门禁库时返回 False）。
 
     为什么必须连 `document` 一起清
     ------------------------------
-    `IndexServiceImpl.rebuild()` 会把**所有**未删资料塞进一次 `parseDocuments` 请求，
+    `IndexServiceImpl.rebuild()` 会把该用户**所有**未删资料塞进一次 `parseDocuments` 请求，
     `triggerParse` 再逐个读磁盘。只清 `chunk` / `index_task` 的话，历史资料会随着用例
     数量线性累积：J4 首轮 29 个用例一共堆了几十份资料，单次建库要重新解析全部文件，
     整体跑了 4248 秒（70 分钟），并且让 15s 的 `wait_until` 直接超时。
@@ -316,7 +412,12 @@ def reset_ingest_state() -> bool:
     ----------------
     `clean_db` 只删表行不删文件，残留目录会一直留在 `server-java/storage/` 下；
     清干净后「上传 → 落盘 → 删除」这类断言才不会被上一轮的残留误导。
+
+    安全边界见 `destructive_allowed()`：非门禁库一律不动。
     """
+    allowed, _reason = destructive_allowed()
+    if not allowed:
+        return False
     try:
         import pymysql  # type: ignore
     except ImportError:
@@ -349,9 +450,14 @@ def reset_ingest_state() -> bool:
 def clean_db():
     """每个用例前后清空 message / conversation / document / index_task / eval_run。
 
-    只在显式装了数据库驱动且 `DB_URL` 可连通时生效；否则用例拿到的是 None，
-    自己按「无 DB」路径处理（例如只打 HTTP、依赖服务端自带清理）。
+    只在「驱动已装 + 库可连通 + 目标是门禁库」三者同时成立时生效；否则用例拿到 None，
+    自己按「无 DB」路径处理。门禁库之外的库一律不清，见 `destructive_allowed()`。
     """
+    allowed, reason = destructive_allowed()
+    if not allowed:
+        pytest.skip(f"跳过破坏性清理：{reason}")
+        return
+
     try:
         import pymysql  # type: ignore  # noqa: F401
     except ImportError:

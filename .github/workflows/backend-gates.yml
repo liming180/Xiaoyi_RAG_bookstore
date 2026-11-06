@@ -1,0 +1,176 @@
+name: backend-gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: xiaoyi_rag_gate
+          MYSQL_USER: xiaoyi
+          MYSQL_PASSWORD: xiaoyi-gate-password
+          MYSQL_ROOT_PASSWORD: root-gate-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot-gate-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      INTERNAL_TOKEN: ci-internal-token-0123456789
+      AUTH_JWT_SECRET: ci-jwt-secret-0123456789abcdef
+      # 变量名必须与 application.yml 完全一致：secondary 是 AUTH_SECONDARY_BOOTSTRAP_*，
+      # 写成 AUTH_BOOTSTRAP_SECONDARY_* 会被静默忽略，B 账号永远建不出来。
+      AUTH_BOOTSTRAP_USERNAME: gate-a
+      AUTH_BOOTSTRAP_PASSWORD: gate-a-password-1
+      AUTH_SECONDARY_BOOTSTRAP_USERNAME: gate-b
+      AUTH_SECONDARY_BOOTSTRAP_PASSWORD: gate-b-password-1
+      # test/conftest.py 靠这四个变量登录取 token；不设就只有空口令，所有 live 用例直接失败。
+      JAVA_USERNAME: gate-a
+      JAVA_PASSWORD: gate-a-password-1
+      JAVA_USERNAME_B: gate-b
+      JAVA_PASSWORD_B: gate-b-password-1
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: xiaoyi_rag_gate
+      MYSQL_USER: xiaoyi
+      MYSQL_PASSWORD: xiaoyi-gate-password
+      STORAGE_ROOT: ${{ github.workspace }}/test-artifacts/ci-storage
+      # uvicorn 默认 5s 回收 keep-alive，JDK 连接池复用该连接会随机 Connection reset（50301）。
+      # 调大到 75s，与本机 tools/p7_up.py、tools/local_ai_up.py 一致。
+      UVICORN_KEEP_ALIVE: "75"
+      # 真实 provider 档（J4/J6）需要 J4 的五阶段能被 Java 1s 轮询观察到；
+      # 设 1200ms 让 parsing/splitting/embedding/summarizing/done 每个阶段都跨过一次轮询。
+      # mock 档（J3/J5）设 0，让 J5 的 experiment 用例在 5s 内跑完两组。
+      REAL_STAGE_DELAY_MS: "1200"
+      MOCK_STAGE_DELAY_MS: "0"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: server-ai/requirements.txt
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Python dependencies
+        run: python -m pip install -r server-ai/requirements.txt -r test/requirements-test.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Java unit and formatting gate
+        working-directory: server-java
+        run: mvn -q verify
+
+      - name: Start Python AI service (real provider)
+        env:
+          INGEST_STAGE_DELAY_MS: ${{ env.REAL_STAGE_DELAY_MS }}
+        run: |
+          mkdir -p "$STORAGE_ROOT"
+          nohup python -m uvicorn app.main:app --app-dir server-ai --host 127.0.0.1 --port 8000 \
+            --timeout-keep-alive "$UVICORN_KEEP_ALIVE" > test-artifacts/ci-python.log 2>&1 &
+          echo "$!" > test-artifacts/ci-python.pid
+          python - <<'PY'
+          import time, urllib.request
+          request = urllib.request.Request('http://127.0.0.1:8000/internal/v1/health', headers={'X-Internal-Token': 'ci-internal-token-0123456789'})
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(request, timeout=2) as response:
+                      if response.status == 200:
+                          raise SystemExit(0)
+              except Exception:
+                  time.sleep(1)
+          raise SystemExit('Python readiness timeout')
+          PY
+
+      - name: Package and start Java service (real provider, gate-probe)
+        # J1 的错误码用例要打 /__gate/throw 探针，必须传 --profile gate-probe，否则十条全 404。
+        # AI_MOCK=false 让 J4/J6 走真实 Python AI（含五阶段节拍、幂等重试）。
+        env:
+          AI_MOCK: "false"
+        run: |
+          mvn -q -DskipTests package -f server-java/pom.xml
+          python test/scripts/serve_java.py --detach --db-name xiaoyi_rag_gate --profile gate-probe --log test-artifacts/ci-java-real.log
+          echo "started java (real provider)"
+
+      - name: Real-provider gates (J0 J1 J2 J4 J6 A1 J7)
+        # J4/J6 需要真实 provider 的 SSE 帧、stage 映射与五阶段节拍。
+        run: |
+          python -m pytest \
+            test/J0-contract \
+            test/J1-skeleton \
+            test/J2-crud \
+            test/J4-ingest \
+            test/J6-integration \
+            test/A1-ai-skeleton \
+            test/J7-isolation \
+            -q
+
+      - name: Restart Java in mock mode (for J3/J5)
+        # J3 的 degrade/[fail] 标记、J5 的关键词打分只有 MockAiClient 才有；
+        # 不切 mock 时这两个目录 10 条用例全挂。杀掉真实档 java，换 AI_MOCK=true 重启。
+        env:
+          AI_MOCK: "true"
+        run: |
+          # serve_java.py --detach 会把 java pid 落到 test-artifacts/java.pid；
+          # 不要 pkill -f 'xiaoyi-rag-server'（会匹配到 pkill 自己的命令行，
+          # 把整个 step 杀掉）。
+          JAVA_PID="$(cat test-artifacts/java.pid 2>/dev/null || true)"
+          if [ -n "$JAVA_PID" ]; then
+            kill "$JAVA_PID" 2>/dev/null || true
+            for i in $(seq 1 30); do
+              if ! kill -0 "$JAVA_PID" 2>/dev/null; then break; fi
+              sleep 1
+            done
+          fi
+          rm -f test-artifacts/java.pid
+          python test/scripts/serve_java.py --detach --db-name xiaoyi_rag_gate --profile gate-probe --log test-artifacts/ci-java-mock.log
+          echo "restarted java (mock)"
+
+      - name: Mock-provider gates (J3 J5)
+        # 覆盖 degraded 帧、[fail] 标记降级、experiment 关键词打分（5s 内跑完两组）。
+        run: |
+          python -m pytest test/J3-sse test/J5-eval -q
+
+      - name: Frontend gate
+        working-directory: frontend
+        run: pnpm run gate
+
+      - name: Architecture snapshot
+        run: python tools/arch_snapshot.py
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-gate-artifacts
+          path: |
+            test-artifacts/
+            docs/03-架构评审/snapshot/架构快照.md
+          if-no-files-found: warn

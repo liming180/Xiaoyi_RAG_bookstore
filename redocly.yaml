@@ -1,0 +1,15 @@
+# Redocly 配置：只放宽三条与「本仓契约设计」直接冲突的规则，其余保持 recommended。
+#
+# 1. no-empty-servers —— 两份契约都**刻意不写 servers**（见各文件 info.description：
+#    「本文件不写 servers（禁止在契约里固化地址）」）。服务地址由 AI_SERVICE_URL /
+#    VITE_API_BASE 注入，写进契约就等于把地址固化进版本库，因此该规则对本仓无意义。
+# 2. info-license-strict —— license 只声明 name: Internal（内部系统，无 SPDX 标识）。
+# 3. no-unused-components —— SSE 的 5 个事件 data schema 只通过 `x-sse-events[*].dataSchema`
+#    字符串引用，Redocly 不解析 x- 扩展，会误判为「未被引用」；降为 warn 保留可见性。
+extends:
+  - recommended
+
+rules:
+  no-empty-servers: off
+  info-license-strict: off
+  no-unused-components: warn
