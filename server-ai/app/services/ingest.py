@@ -11,12 +11,16 @@ SQLite（`state`）仍是切片元数据的权威来源：Java 建库轮询拿�
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 from ..config import get_settings
 from ..core.rag import pipeline, prompt
 from ..core.rag.embedder import Embedder, embedder_from_settings
+from ..core.rag.fusion import reciprocal_rank_fusion
+from ..core.rag.reranker import QueryRewriter, Reranker, reranker_from_settings
+from ..core.rag.retriever import bm25_cache
 from ..core.rag.splitter import MAX_CHUNKS_PER_DOC, MAX_DOCS_PER_USER, build_pieces
 from ..core.vector_store.store import VectorStore, store_from_settings
 from ..schemas.models import ParseDocument, ParseRequest, RetrieveRequest
@@ -31,6 +35,8 @@ DEFAULT_OVERLAP = 30
 #: 引用里允许出现的 score_stage 取值（契约 enum）。
 SCORE_STAGES = ("dense", "sparse", "rrf", "rerank")
 
+logger = logging.getLogger(__name__)
+
 
 class _Runtime:
     """进程内单例：向量库与 embedder 都要跨请求复用（建集合、缓存维度）。"""
@@ -38,6 +44,8 @@ class _Runtime:
     def __init__(self) -> None:
         self._store: VectorStore | None = None
         self._embedder: Embedder | None = None
+        self._reranker: Reranker | None = None
+        self._rewriter: QueryRewriter | None = None
         self._dim = 0
 
     def store(self) -> VectorStore:
@@ -50,11 +58,24 @@ class _Runtime:
             self._embedder = embedder_from_settings(get_settings())
         return self._embedder
 
+    def reranker(self) -> Reranker:
+        if self._reranker is None:
+            self._reranker = reranker_from_settings(get_settings())
+        return self._reranker
+
+    def rewriter(self) -> QueryRewriter:
+        if self._rewriter is None:
+            self._rewriter = QueryRewriter(get_settings())
+        return self._rewriter
+
     def reset(self) -> None:
         """测试切换 settings 时清空缓存。"""
         self._store = None
         self._embedder = None
+        self._reranker = None
+        self._rewriter = None
         self._dim = 0
+        bm25_cache.clear()
 
     def ensure_dim(self, dim: int) -> int:
         """按需建集合；维度以 embedder 首次返回为准。"""
@@ -78,11 +99,26 @@ def _pause() -> None:
         time.sleep(delay_ms / 1000.0)
 
 
-def _document_no(user_id: int, doc_id: str) -> int:
-    """取文档在该用户下的稳定编号，用于拼 D01-C001 这类 chunk_id。"""
+def _document_no(user_id: int, doc_id: str, title: str = "") -> int:
+    """取文档在该用户下的稳定编号，用于拼 D01-C001 这类 chunk_id。
+
+    编号是两位十进制（契约 `^D\\d{2}-C\\d{3}$`），所以一个用户**同时**最多 99 份资料。
+    超出时由 `state.upsert_document` 抛出带动作的错，这里不再自己 clamp ——
+    旧实现把 >99 压成 99，第 100 份起全部变成 `D99-Cxxx`，同一次 upsert 主键重复，
+    Milvus 只回一句 `duplicate primary keys are not allowed in the same batch`。
+
+    编号查不到时**就地补登记**而不是报错：并发建库时另一个任务可能刚回收过编号，
+    这里补一次比让整个任务失败划算（实测踩过「资料 495 尚未登记编号」）。
+    """
     doc_no = state.document_number(user_id, doc_id)
-    if doc_no <= 0 or doc_no > MAX_DOCS_PER_USER:
-        return max(1, min(MAX_DOCS_PER_USER, doc_no or 1))
+    if doc_no <= 0:
+        doc_no = state.upsert_document(user_id, doc_id, title or doc_id, "PARSING", 0)
+    if doc_no > MAX_DOCS_PER_USER:
+        raise ValueError(
+            f"资料数已达上限：用户 {user_id} 的第 {doc_no} 份资料无法编号"
+            f"（chunk_id 的文档号只有两位，最多 {MAX_DOCS_PER_USER} 份）；"
+            "请先删除不再需要的资料再建库"
+        )
     return doc_no
 
 
@@ -136,6 +172,20 @@ def _embed_and_store(
         raise RuntimeError("向量化返回空向量")
     runtime.ensure_dim(dim)
     payload = [{**row, "vector": vector} for row, vector in zip(rows, vectors)]
+    # 同一批里出现重复 chunk_id 时，Milvus 只回一句 code=1100 的 duplicate primary keys，
+    # 看不出是哪份资料撞的。这里先自查并把「先出现的」和「撞上的」两方都点名，
+    # 把定位成本从「翻库」降到「读报错」。
+    owner: dict[str, str] = {}
+    duplicated: list[str] = []
+    for row in payload:
+        chunk = row["chunk_id"]
+        previous = owner.get(chunk)
+        if previous is not None:
+            duplicated.append(f"{chunk}: doc {previous} 与 doc {row['doc_id']}")
+        else:
+            owner[chunk] = str(row["doc_id"])
+    if duplicated:
+        raise ValueError("同一批切片出现重复 chunk_id：" + "；".join(sorted(set(duplicated))[:5]))
     # 先删同任务旧行，保证重放同一 submission_key 不会残留旧切片。
     store.delete_task(user_id, task_id)
     return store.upsert(user_id, task_id, payload)
@@ -144,6 +194,14 @@ def _embed_and_store(
 def run_ingest(user_id: int, task_id: str, req: ParseRequest) -> None:
     """后台推进一次解析任务；任何异常都把任务置为 FAILED。"""
     try:
+        # 先回收已删除资料占用的编号，再登记本次资料 —— 顺序反了的话，「已达上限」
+        # 会在回收腾出空位之前就把任务判死（实测踩过）。
+        released = state.reconcile_documents(
+            user_id, [doc.doc_id for doc in req.documents], before=int(time.time())
+        )
+        if released:
+            logger.info("用户 %s 建库前回收了 %s 份已删除资料", user_id, released)
+
         state.update_task(user_id, task_id, status="RUNNING", stage="parsing", progress=20)
         for doc in req.documents:
             state.upsert_document(user_id, doc.doc_id, doc.title or doc.name or doc.doc_id, "PARSING", 0)
@@ -152,7 +210,8 @@ def run_ingest(user_id: int, task_id: str, req: ParseRequest) -> None:
         state.update_task(user_id, task_id, stage="splitting", progress=45)
         planned: list[tuple[ParseDocument, list[dict[str, Any]]]] = []
         for doc in req.documents:
-            parts = build_chunks(user_id, doc, _document_no(user_id, doc.doc_id), req)
+            doc_no = _document_no(user_id, doc.doc_id, doc.title or doc.name or "")
+            parts = build_chunks(user_id, doc, doc_no, req)
             planned.append((doc, parts))
         _pause()
 
@@ -217,8 +276,24 @@ def _fallback_rows(user_id: int, req: RetrieveRequest) -> list[dict[str, Any]]:
     return found[: req.k]
 
 
-def retrieve(user_id: int, req: RetrieveRequest) -> pipeline.RecallResult:
-    """检索：问题向量化后在本人最近成功任务的切片里做纯向量 top-k。"""
+def _scoped_rows(user_id: int, task_id: str, req: RetrieveRequest) -> list[dict[str, Any]]:
+    """BM25 的语料范围与向量路完全一致；先限定用户，再建倒排。"""
+    rows = state.list_chunks(user_id, task_id)
+    allowed = set(req.doc_ids) if req.doc_ids else None
+    return [
+        row for row in rows
+        if (allowed is None or row["doc_id"] in allowed) and (not req.kind or row["kind"] == req.kind)
+    ]
+
+
+def retrieve(
+    user_id: int,
+    req: RetrieveRequest,
+    *,
+    history: list[dict[str, str]] | None = None,
+    mode: str | None = None,
+) -> pipeline.RecallResult:
+    """四档检索：dense / bm25 / rrf / hybrid（RRF + 精排）。"""
     task_id = _latest_task(user_id)
     if task_id is None:
         return pipeline.RecallResult(citations=[], rows=[], elapsed_ms=0)
@@ -233,38 +308,94 @@ def retrieve(user_id: int, req: RetrieveRequest) -> pipeline.RecallResult:
         traces = [pipeline._as_trace_row(i + 1, row, "dense") for i, row in enumerate(rows)]
         return pipeline.RecallResult(citations=citations, rows=traces, elapsed_ms=0)
 
-    embedder = runtime.embedder()
-    vector = embedder.embed([question])[0]
+    settings = get_settings()
+    rewritten = runtime.rewriter().rewrite(question, history)
+    vector = runtime.embedder().embed([rewritten])[0]
     runtime.ensure_dim(len(vector))
-    result = pipeline.recall(
-        runtime.store(),
-        pipeline.RecallRequest(
-            user_id=user_id,
-            task_id=task_id,
-            vector=vector,
-            k=req.k,
-            doc_ids=list(req.doc_ids),
-            kind=req.kind,
-        ),
-        stage="dense",
+    request = pipeline.RecallRequest(
+        user_id=user_id,
+        task_id=task_id,
+        vector=vector,
+        k=req.k,
+        doc_ids=list(req.doc_ids),
+        kind=req.kind,
     )
-    if not result.citations:
+    dense = runtime.store().search(
+        user_id=user_id, task_id=task_id, vector=vector,
+        k=max(settings.retrieval_candidate_limit, req.k),
+        doc_ids=req.doc_ids, kind=req.kind,
+    )
+    if not dense:
         rows = _fallback_rows(user_id, req)
         citations = [pipeline._as_citation(i + 1, row, "dense") for i, row in enumerate(rows)]
         traces = [pipeline._as_trace_row(i + 1, row, "dense") for i, row in enumerate(rows)]
-        return pipeline.RecallResult(citations=citations, rows=traces, elapsed_ms=result.elapsed_ms)
+        return pipeline.RecallResult(citations=citations, rows=traces, elapsed_ms=0)
+
+    selected_mode = mode or settings.retrieval_mode
+    diagnostics: dict[str, Any] = {
+        "mode": selected_mode,
+        "originalQuestion": question,
+        "rewrittenQuestion": rewritten,
+        "rewriteDegraded": runtime.rewriter().degraded,
+        "dense": [{"chunkId": row["chunk_id"], "score": row["score"]} for row in dense],
+        "sparse": [],
+        "rrf": [],
+        "rerank": [],
+    }
+    if selected_mode == "dense":
+        result = pipeline.recall(runtime.store(), request, stage="dense", candidates=dense)
+        result.diagnostics = diagnostics
+        return result
+
+    scoped = _scoped_rows(user_id, task_id, req)
+    sparse = bm25_cache.build(user_id, task_id, scoped).top(rewritten, settings.retrieval_candidate_limit)
+    diagnostics["sparse"] = [{"chunkId": row["chunk_id"], "score": row["score"]} for row in sparse]
+    if selected_mode == "bm25":
+        result = pipeline.recall(runtime.store(), request, stage="sparse", candidates=sparse)
+        result.diagnostics = diagnostics
+        return result
+
+    fused = reciprocal_rank_fusion(
+        (dense, sparse), k=settings.retrieval_rrf_k, limit=settings.retrieval_candidate_limit,
+    )
+    diagnostics["rrf"] = [{"chunkId": row["chunk_id"], "score": row["score"]} for row in fused]
+    if selected_mode == "rrf" or not settings.retrieval_rerank:
+        result = pipeline.recall(runtime.store(), request, stage="rrf", candidates=fused)
+        result.diagnostics = diagnostics
+        return result
+
+    reranker = runtime.reranker()
+    ranked = reranker.rerank(rewritten, fused, req.k)
+    diagnostics["rerank"] = [{"chunkId": row["chunk_id"], "score": row["score"]} for row in ranked]
+    diagnostics["rerankDegraded"] = reranker.degraded
+    diagnostics["degradeReason"] = reranker.reason
+    # 服务只返回 top-k；未入选的候选接在后面，构成 F08 的淘汰区。
+    ranked_ids = {row["chunk_id"] for row in ranked}
+    candidates = ranked + [row for row in fused if row["chunk_id"] not in ranked_ids]
+    result = pipeline.recall(runtime.store(), request, stage="rerank", candidates=candidates)
+    result.diagnostics = diagnostics
     return result
 
 
-def retrieve_data(user_id: int, req: RetrieveRequest) -> dict[str, Any]:
-    """检索结果；无命中时返回空引用列表，不伪造引用。"""
-    result = retrieve(user_id, req)
+def retrieve_data(
+    user_id: int, req: RetrieveRequest, mode: str | None = None,
+) -> dict[str, Any]:
+    """检索结果；无命中时返回空引用列表，不伪造引用。
+
+    `InternalRetrieveResult` 是 `additionalProperties: false`，只有 citations 与 rows。
+    A3 的中间产物（dense/sparse/rrf/rerank 各路候选与降级原因）留在
+    `RecallResult.diagnostics` 里供进程内诊断与报告使用，**不进这个响应**：
+    多塞一个字段会让整个响应在 Java 侧与契约校验里被判非法。
+    """
+    result = retrieve(user_id, req, mode=mode)
     return {"citations": result.citations, "rows": result.rows}
 
 
-def context_citations(user_id: int, question: str, k: int) -> list[dict[str, Any]]:
+def context_citations(
+    user_id: int, question: str, k: int, history: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """对话链路取上下文引用；供 `chat.sse_events` 复用同一套检索。"""
-    result = retrieve(user_id, RetrieveRequest(question=question, k=k))
+    result = retrieve(user_id, RetrieveRequest(question=question, k=k), history=history)
     return result.citations
 
 

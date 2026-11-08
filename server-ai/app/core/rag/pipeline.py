@@ -48,6 +48,8 @@ class RecallResult:
     citations: list[dict[str, Any]]
     rows: list[dict[str, Any]]
     elapsed_ms: int
+    # F08 中间产物只进应用内部与诊断报告，不扩 InternalRetrieveResult 契约。
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def _as_citation(ref: int, hit: dict[str, Any], stage: str) -> dict[str, Any]:
@@ -78,6 +80,7 @@ def _as_trace_row(rank: int, hit: dict[str, Any], stage: str) -> dict[str, Any]:
     契约里 `InternalTraceRow` 与 `InternalCitation` 的字段集**不一样**：
     轨迹行没有 `ref`（它用 `rank`）也没有 `score_stage`，且 `additionalProperties: false`。
     多给一个字段不是「信息更全」，而是让整条轨迹在 Java 侧反序列化时被判为非法。
+    档位（dense/sparse/rrf/rerank）要看 citations 或 diagnostics，不在这张表里。
     """
     row = _as_citation(rank, hit, stage)
     row.pop("ref")
@@ -87,19 +90,39 @@ def _as_trace_row(rank: int, hit: dict[str, Any], stage: str) -> dict[str, Any]:
     return row
 
 
-def recall(store: VectorStore, request: RecallRequest, stage: str = "dense") -> RecallResult:
-    """执行一次召回并组装引用与轨迹。"""
+def recall(
+    store: VectorStore,
+    request: RecallRequest,
+    stage: str = "dense",
+    *,
+    candidates: Sequence[dict[str, Any]] | None = None,
+) -> RecallResult:
+    """执行一次召回并组装引用与轨迹。
+
+    candidates 是融合后的全量候选：citations 只取前 k，rows 保留全部，
+    retrieved 标出进入生成上下文的界线（F08）。A2 不传 candidates 时保持旧形状。
+    """
     started = time.perf_counter()
-    hits = store.search(
-        user_id=request.user_id,
-        task_id=request.task_id,
-        vector=request.vector,
-        k=request.k,
-        doc_ids=request.doc_ids,
-        kind=request.kind,
+    hits = (
+        list(candidates)
+        if candidates is not None
+        else store.search(
+            user_id=request.user_id,
+            task_id=request.task_id,
+            vector=request.vector,
+            k=request.k,
+            doc_ids=request.doc_ids,
+            kind=request.kind,
+        )
     )
-    citations = [_as_citation(index + 1, hit, stage) for index, hit in enumerate(hits)]
-    rows = [_as_trace_row(index + 1, hit, stage) for index, hit in enumerate(hits)]
+    selected = hits[: request.k]
+    citations = [_as_citation(index + 1, hit, stage) for index, hit in enumerate(selected)]
+    rows = []
+    selected_ids = {item["chunk_id"] for item in selected}
+    for index, hit in enumerate(hits):
+        row = _as_trace_row(index + 1, hit, stage)
+        row["retrieved"] = hit["chunk_id"] in selected_ids
+        rows.append(row)
     elapsed = int((time.perf_counter() - started) * 1000)
     return RecallResult(citations=citations, rows=rows, elapsed_ms=elapsed)
 

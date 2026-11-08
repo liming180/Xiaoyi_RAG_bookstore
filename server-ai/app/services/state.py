@@ -11,9 +11,10 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from ..config import get_settings
+from ..core.rag.splitter import MAX_DOCS_PER_USER
 
 # 重启恢复时写入的失败原因（中文，说明服务重启导致中断）。
 RESTART_ERROR = "服务重启导致任务中断，请重新提交解析任务"
@@ -226,7 +227,13 @@ def latest_succeeded_task(user_id: int) -> dict[str, Any] | None:
 
 
 def upsert_document(user_id: int, doc_id: str, title: str, status: str, chunk_count: int) -> int:
-    """写入或更新用户自己的文档状态，返回该用户内的文档序号。"""
+    """写入或更新用户自己的文档状态，返回该用户内的文档序号。
+
+    序号是 chunk_id 里的两位十进制（`D01-C001`），所以一个用户**同时**最多 99 份。
+    新文档取当前最小的空闲号而不是 `MAX(doc_no)+1`：删除资料后腾出来的号要能被复用，
+    否则「累计上传过 99 份」就等于「永久报废」——实测踩过，第 100 份起全部被压成
+    D99，同批 upsert 主键重复，Milvus 报 code=1100。
+    """
     connection = _connect()
     now = int(time.time())
     with _lock:
@@ -235,12 +242,18 @@ def upsert_document(user_id: int, doc_id: str, title: str, status: str, chunk_co
             (user_id, doc_id),
         ).fetchone()
         if row is None:
-            doc_no = int(
-                connection.execute(
-                    "SELECT COALESCE(MAX(doc_no), 0) FROM documents WHERE user_id = ?",
-                    (user_id,),
-                ).fetchone()[0]
-            ) + 1
+            used = {
+                int(item["doc_no"])
+                for item in connection.execute(
+                    "SELECT doc_no FROM documents WHERE user_id = ?", (user_id,)
+                ).fetchall()
+            }
+            doc_no = next((slot for slot in range(1, MAX_DOCS_PER_USER + 1) if slot not in used), 0)
+            if doc_no == 0:
+                raise ValueError(
+                    f"资料数已达上限：用户 {user_id} 同时最多 {MAX_DOCS_PER_USER} 份"
+                    "（chunk_id 的文档号只有两位）；请先删除不再需要的资料再建库"
+                )
             connection.execute(
                 "INSERT INTO documents (user_id, doc_id, doc_no, title, status, chunk_count, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -255,6 +268,45 @@ def upsert_document(user_id: int, doc_id: str, title: str, status: str, chunk_co
             )
         connection.commit()
     return doc_no
+
+
+def reconcile_documents(user_id: int, doc_ids: Iterable[str], *, before: int) -> int:
+    """回收本次建库资料集之外、且在 `before` 之前登记的文档，返回释放的条数。
+
+    Java 侧删除资料不会通知 Python，状态库里的 `documents` 行会一直留着、把 99 个编号
+    慢慢吃光。每次建库前拿请求里的全量资料集对账，把已删除的资料连切片一起清掉。
+
+    两条约束都是踩出来的：
+
+    1. **必须先于编号分配执行**，否则「已达上限」会在回收腾出空位之前就把任务判死；
+    2. **只删 `updated_at < before` 的行**。同一用户的两次建库在时间上可能重叠
+       （Python 后台线程按 `INGEST_STAGE_DELAY_MS` 分段推进），后一个任务刚登记的
+       资料绝不能因为不在前一个任务的资料集里就被删掉 —— 实测报过
+       「资料 495 尚未登记编号，无法生成 chunk_id」。
+
+    不做编号重排：分配取最小空闲号，删掉的行腾出的空位自然会被下一次分配用上，
+    而重排会在并发任务之间改动对方正在使用的编号。
+    """
+    keep = {str(doc_id) for doc_id in doc_ids if doc_id}
+    connection = _connect()
+    with _lock:
+        rows = connection.execute(
+            "SELECT doc_id, updated_at FROM documents WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        stale = [
+            str(item["doc_id"])
+            for item in rows
+            if str(item["doc_id"]) not in keep and int(item["updated_at"]) < before
+        ]
+        for doc_id in stale:
+            connection.execute(
+                "DELETE FROM chunks WHERE user_id = ? AND doc_id = ?", (user_id, doc_id)
+            )
+            connection.execute(
+                "DELETE FROM documents WHERE user_id = ? AND doc_id = ?", (user_id, doc_id)
+            )
+        connection.commit()
+    return len(stale)
 
 
 def document_number(user_id: int, doc_id: str) -> int:

@@ -7,3 +7,6 @@ httpx>=0.27
 # mock 档不 import 它，pymilvus 缺失时只有 MILVUS_URI 非空的真实链路会报错，
 # 报错信息由 vector_store/store.py 的 _ensure_client() 给出明确指引。
 pymilvus>=2.5
+# A3 中文稀疏召回：分词由 retriever.py 自管，BM25 数学与 RRF 在项目内实现。
+jieba>=0.42,<0.43
+rank-bm25>=0.2,<0.3

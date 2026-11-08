@@ -109,11 +109,12 @@ async def index_status(
 @router.post("/retrieve")
 async def retrieve(
     req: RetrieveRequest,
+    retrieval_mode: str | None = None,
     _token: str = Depends(require_token),
     user_id: int = Depends(require_user_id),
 ):
-    """检索接口；无命中返回空引用列表。"""
-    return envelope(ingest.retrieve_data(user_id, req))
+    """检索接口；无命中返回空引用列表。retrieval_mode 覆盖默认档位。"""
+    return envelope(ingest.retrieve_data(user_id, req, mode=retrieval_mode))
 
 
 @router.post("/eval/batch")

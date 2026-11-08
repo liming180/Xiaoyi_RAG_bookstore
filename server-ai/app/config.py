@@ -13,6 +13,18 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_timeout_ms: int = 60000
 
+    # ---- A3 混合检索 ----
+    # hybrid：双路 + RRF + 重排；dense：保留 A2 纯向量用于四档对照。
+    retrieval_mode: str = "hybrid"
+    retrieval_candidate_limit: int = 20
+    retrieval_rrf_k: int = 60
+    retrieval_rerank: bool = True
+    retrieval_rewrite: bool = True
+    rerank_endpoint: str = ""
+    rerank_model: str = "rerank"
+    rerank_api_key: str = ""
+    rerank_timeout_ms: int = 30000
+
     # ---- Embedding（OpenAI 兼容 /embeddings）----
     embedding_endpoint: str = ""
     embedding_model: str = "mock-embedding"
@@ -48,6 +60,12 @@ class Settings(BaseSettings):
                 raise ValueError("LLM_ENDPOINT must be set when AI_PROVIDER=real")
         if self.embedding_batch_size < 1:
             raise ValueError("EMBEDDING_BATCH_SIZE must be >= 1")
+        if self.retrieval_mode not in ("dense", "bm25", "rrf", "hybrid"):
+            raise ValueError("RETRIEVAL_MODE must be dense, bm25, rrf, or hybrid")
+        if self.retrieval_candidate_limit < 1:
+            raise ValueError("RETRIEVAL_CANDIDATE_LIMIT must be >= 1")
+        if self.retrieval_rrf_k < 1:
+            raise ValueError("RETRIEVAL_RRF_K must be >= 1")
         return self
 
 @lru_cache
