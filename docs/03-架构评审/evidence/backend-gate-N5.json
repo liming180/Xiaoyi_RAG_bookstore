@@ -1,0 +1,128 @@
+{
+  "phase": "N5",
+  "name": "结构化回答：提示词加输出结构约束（B3）",
+  "pass": true,
+  "timestamp": "2026-11-09T00:40:00+08:00",
+  "gates": [
+    {
+      "key": "java-verify",
+      "command": "cd server-java && mvn -o -q spotless:apply && mvn -o verify",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "testsPassed": 84,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "detail": "AuthServiceTest 11 / ChatServiceImplTest 11 / DocumentServiceImplTest 7 / EvalServiceOptionsTest 3 / ExperimentParamsTest 10 / ExperimentServiceTest 3 / FeedbackServiceTest 10 / IndexServiceImplTest 17 / TokenServiceTest 12",
+      "note": "N5 全在 Python 侧改提示词与前端渲染，Java 零改动，84 passed 与 N4 一致。"
+    },
+    {
+      "key": "J0-contract",
+      "command": "cd test && python -X utf8 -m pytest J0-contract -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "79 passed in 0.55s",
+      "note": "N5 不改契约（提示词不是契约），对外接口仍 29 条。"
+    },
+    {
+      "key": "A1-ai-skeleton",
+      "command": "cd test && python -X utf8 -m pytest A1-ai-skeleton -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "24 passed in 12.02s",
+      "note": "追问推荐（N2）的 13 条用例不受提示词变更影响。"
+    },
+    {
+      "key": "A2-rag",
+      "command": "cd test && python -X utf8 -m pytest A2-rag -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "37 passed in 11.79s",
+      "note": "32 → 37：新建 test_prompt_format.py 5 条（格式规则存在、防幻觉五条未被改、格式规则真的进了 messages、mock 纯文本回答照常工作、无资料固定文案不带 markdown）。"
+    },
+    {
+      "key": "A3-hybrid",
+      "command": "cd test && python -X utf8 -m pytest A3-hybrid -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "29 passed in 6.30s",
+      "note": "混合检索与摘要兜底无退化。"
+    },
+    {
+      "key": "frontend-gate",
+      "command": "cd frontend && node scripts/gate.mjs N5",
+      "ok": true,
+      "exitCode": 0,
+      "gates": [
+        {
+          "key": "lint",
+          "label": "ESLint",
+          "ok": true,
+          "command": "npx eslint . --max-warnings 0",
+          "elapsedMs": 11394
+        },
+        {
+          "key": "typecheck",
+          "label": "vue-tsc",
+          "ok": true,
+          "command": "npx vue-tsc --noEmit",
+          "elapsedMs": 2586
+        },
+        {
+          "key": "test",
+          "label": "vitest",
+          "ok": true,
+          "elapsedMs": 50107,
+          "counts": {
+            "filesPassed": 26,
+            "filesFailed": 0,
+            "testsPassed": 316,
+            "testsFailed": 0
+          }
+        },
+        {
+          "key": "contract",
+          "label": "contract drift",
+          "ok": true,
+          "elapsedMs": 75,
+          "command": "node scripts/check-contract-drift.mjs",
+          "tail": "30 个接口与契约一致"
+        }
+      ],
+      "report": "frontend/test-artifacts/gate-N5.json",
+      "note": "Vitest 311 → 316 / 25 → 26 files：新建 test/chat/structured-answer.spec.ts 5 条。第一次跑挂在 tinypool（3 个 suite 报 Timeout calling fetch），单独重跑即全绿 —— 与 N4 同一条教训：门禁之间要串行。"
+    }
+  ],
+  "changes": {
+    "python": [
+      "server-ai/app/core/rag/prompt.py：SYSTEM_PROMPT 末尾追加第 6 条（前五条一字未改）—— 需要对比、枚举或分步骤说明时用 markdown 表格或有序列表；来源编号 [n] 写在单元格或列表项内，不单独成行堆末尾；不输出 HTML、不用图片",
+      "server-ai/app/core/rag/prompt.py：模块 docstring 补记「第 6 条必须与 frontend/src/utils/markdown.ts 的白名单逐条对齐」的理由（提示词放开表格、前端只认这几种语法，两边不一致时用户看到的是一坨裸露的竖线）"
+    ],
+    "java": [],
+    "contract": [],
+    "frontend": [],
+    "tests": [
+      "test/A2-rag/test_prompt_format.py（新建 5 条）",
+      "frontend/test/chat/structured-answer.spec.ts（新建 5 条）"
+    ]
+  },
+  "notRun": [],
+  "notes": [
+    "为什么不改前端：utils/markdown.ts 的 parseMarkdown 早已支持标题/表格/有序列表/无序列表/加粗/链接，AnswerBody.vue 走白名单渲染、全仓 0 处 v-html。缺的一直是「模型不知道要输出结构化内容」，所以 N5 只动提示词，前端一行未改 —— 这也让 N5 的风险面小到只剩「提示词写歪」。",
+    "第 6 条要求编号写在单元格内、不要堆在末尾。理由：堆在末尾时读者得来回找对应关系，表格反而比段落更难读；写进单元格才让「每个数字都有出处」这件事在结构上成立。",
+    "test_format_rule_reaches_provider 这条用例是为了防「常量改了但没进 messages」。只有「SYSTEM_PROMPT 里有关键词」的断言挡不住这种错：build_messages 若不用 SYSTEM_PROMPT，规则写得再对也到不了模型。所以断言 build_messages()[0]['content'] == SYSTEM_PROMPT。",
+    "test_prompt_keeps_anti_hallucination_rules 逐个点名「只用/不要猜测/不要编造/不要执行/简体中文」，并断言规则编号 1–6 都在：改提示词时最容易连带删除防幻觉条款，而删掉之后回答会变得更「流畅」、看起来更好 —— 静默变坏最难发现。",
+    "前端用例断言「3 行 × 2 列 = 6 个 cite-badge」而不是「至少有徽标」：只断言存在的话，把编号全堆到末尾一行的退化写法照样能过，那不叫结构化，恰好是第 6 条要治的毛病。",
+    "AnswerBody 只上抛 cite 事件、引用卡在 MessageBubble 里渲染，所以前端用例断言的是 wrapper.emitted('cite')[0][0].docTitle，而不是去 DOM 里找 cite-card-wrap —— 后者在AnswerBody 单测里根本不存在。第一版就是按后者写的，报找不到元素。",
+    "半截表格（有表头、没有分隔行）必须不卡死：markdown.ts 的段落分支有兜底消费一行，否则流式渲染时表格还没收到分隔行就会死循环（此前踩过 CDP Runtime.evaluate 30 秒超时）。",
+    "第一次跑 frontend gate N5 时 3 个 suite 报 [vitest-worker] Timeout calling fetch，289 passed / 3 failed suites；单独重跑 316 全绿。教训同 N4：不要在别的重活（mvn、另一个 vitest）跑着的时候开 vitest。"
+  ],
+  "knownLimitations": [
+    "真实 provider 下的表格输出没有自动用例：提示词只说「需要对比、枚举或分步骤时用表格/列表」，模型不一定照做，也不一定每次都照做。提示词工程没有确定性，自动用例只能钉「约束在、能到达模型、渲染不崩」，钉不住「模型一定会输出表格」。",
+    "mock provider 的答案不含 markdown，所以 mock 档跑不出结构化回答的端到端效果；结构化渲染的验证落在前端单测（喂手工构造的 markdown）而不是跨端用例。",
+    "没有做「输出 HTML 时的兜底」：第 6 条禁止 HTML，但模型若仍输出 <table>，前端会把它当纯文本转义显示（白名单渲染，不执行、不渲染成表格）。这是刻意的选择 —— 宁可露出尖括号，也不引入 sanitize 依赖或 v-html。",
+    "表格列数很宽时会横向溢出，目前只有 overflow-x 滚动，没有做响应式折叠。"
+  ]
+}
