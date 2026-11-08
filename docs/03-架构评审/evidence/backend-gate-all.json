@@ -1,14 +1,163 @@
 {
   "phase": "all",
   "pass": true,
-  "timestamp": 1793989281,
+  "partial": false,
+  "coveredStages": [
+    "J0",
+    "J1",
+    "J2",
+    "J3",
+    "J4",
+    "J5",
+    "J6",
+    "J7",
+    "A1",
+    "A2",
+    "A3"
+  ],
+  "missingStages": [],
+  "providerProfiles": [
+    "mock",
+    "real"
+  ],
+  "timestamp": 1794125211,
+  "runs": [
+    {
+      "timestamp": 1794124919,
+      "stages": [
+        "J0"
+      ],
+      "providers": [
+        "real"
+      ]
+    },
+    {
+      "timestamp": 1794124945,
+      "stages": [
+        "J0",
+        "J1",
+        "J2",
+        "J4",
+        "J6",
+        "J7",
+        "A1",
+        "A2",
+        "A3"
+      ],
+      "providers": [
+        "real"
+      ]
+    },
+    {
+      "timestamp": 1794125211,
+      "stages": [
+        "J3",
+        "J5"
+      ],
+      "providers": [
+        "mock"
+      ]
+    }
+  ],
   "gates": [
+    {
+      "key": "J0",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 5985,
+      "summary": "79 passed in 0.80s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "J1",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 16422,
+      "summary": "77 passed, 1 skipped in 13.03s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "J2",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 22233,
+      "summary": "30 passed in 17.14s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "J3",
+      "ok": true,
+      "provider": "mock",
+      "exitCode": 0,
+      "elapsedMs": 52172,
+      "summary": "32 passed in 46.03s",
+      "ranAt": 1794125211
+    },
+    {
+      "key": "J4",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 122656,
+      "summary": "30 passed in 118.45s (0:01:58)",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "J5",
+      "ok": true,
+      "provider": "mock",
+      "exitCode": 0,
+      "elapsedMs": 30281,
+      "summary": "23 passed in 26.35s",
+      "ranAt": 1794125211
+    },
+    {
+      "key": "J6",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 8266,
+      "summary": "12 passed, 1 warning in 4.80s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "J7",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 14500,
+      "summary": "18 passed, 1 warning in 11.35s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "A1",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 5656,
+      "summary": "11 passed in 2.67s",
+      "ranAt": 1794124945
+    },
     {
       "key": "A2",
       "ok": true,
+      "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 15078,
-      "summary": "17 passed in 6.79s"
+      "elapsedMs": 10608,
+      "summary": "21 passed, 1 warning in 7.67s",
+      "ranAt": 1794124945
+    },
+    {
+      "key": "A3",
+      "ok": true,
+      "provider": "real",
+      "exitCode": 0,
+      "elapsedMs": 10891,
+      "summary": "23 passed, 1 warning in 7.09s",
+      "ranAt": 1794124945
     }
   ]
 }
