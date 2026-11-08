@@ -17,6 +17,7 @@
 | `a3_compare.py` | **四档检索对照**（dense / bm25 / rrf / hybrid）。进程内 app + 真实或 mock provider，输出 hit@k / top-1 / MRR / 耗时与逐题 top-3，`--json` 落盘。看真实效果要先把 `AI_PROVIDER=real` 与 `EMBEDDING_*` 放进环境；接 `RERANK_ENDPOINT` 才走真重排。 |
 | `write_a3_report.py` | 跑 A3 套件 + 回归 + `mvn verify`，汇总两份对照 JSON，生成 `test-artifacts/backend-gate-A3.json`。`--skip-suites` 只汇总已有产物。 |
 | `a3_stack_probe.py` | **容器栈 A3 端到端探针**：打 8080 上的真实部署（登录 → 上传 → 建库 → SSE → 轨迹），验 `RETRIEVAL_MODE=hybrid` 下阶段序列含 `rewriting`/`reranking`、引用 `stage=rerank`、跨用户 0 条。与 `a3_compare.py` 互补：一个验指标，一个验部署形态。 |
+| `archive_evidence.py` | 把 `test-artifacts/` 里的小体积报告归档到 `docs/03-架构评审/evidence/` 并重建 `index.md`（大小、结论、SHA256）。排除含凭据的 `p7-env.json` / `local-mysql-public.json` 与含进程号的 `p7-pids.json`，并把本机绝对路径替换成 `<repo>` / `<python>` / `<home>` 占位。`--check` 比对源与归档是否一致。 |
 
 ## 环境装配（被上面几个 import，不单独跑）
 

@@ -76,9 +76,9 @@ docs/
 | [01_功能扩展清单.md](02-重构设计/01_功能扩展清单.md) | 三档套餐的功能清单与工期，明确不建议做的事 |
 | [02_套餐方案_答辩亮点包.md](02-重构设计/02_套餐方案_答辩亮点包.md) | 已选定的答辩亮点包：B1 追问 / C1 反馈闭环 / E3 参数实验 / B3 结构化回答 |
 | [03_前端开发提示词.md](02-重构设计/03_前端开发提示词.md) | P1–P6 分阶段开发手册与每阶段门禁（**已全部执行完毕**） |
-| [04_后端开发提示词.md](02-重构设计/04_后端开发提示词.md) | **旧后端清除清单 + 技术栈启动顺序（Java 先）+ 根 `test/` 规范 + J0→J6/A1→A3 分阶段提示词与门禁**（待执行） |
+| [04_后端开发提示词.md](02-重构设计/04_后端开发提示词.md) | **旧后端清除清单 + 技术栈启动顺序（Java 先）+ 根 `test/` 规范 + J0→J6/A1→A3 分阶段提示词与门禁**（H0–H4/P0–P8/A2/A3 均已执行） |
 
-### 03-架构评审（5 份 + 1 脚本）
+### 03-架构评审（7 份 + 1 脚本 + 1 归档目录）
 
 判断「这套架构够不够企业级」。核心思路：**机器出事实，人出标准，LLM 只做判断**。
 
@@ -92,7 +92,8 @@ docs/
 | [06_后端施工单.md](03-架构评审/06_后端施工单.md) | **诊断转施工**：先定单用户/多用户，再三波次推进；第一波含可复制施工单与四项验收 |
 | [07_前后端契约差异清单.md](03-架构评审/07_前后端契约差异清单.md) | **P0–P8 契约适配的落地记录**：8 个维度的旧/新行为对照 + A–G 验收结果 + 12 条验收期间修掉的真实缺陷 |
 | [03_首轮评审结论.md](03-架构评审/03_首轮评审结论.md) | 实测结论 **14/24 分**，3 个 P0（资料越权、后门 token、Python 全局状态）均带行号 |
-| [snapshot/架构快照.md](03-架构评审/snapshot/架构快照.md) | 机器生成，**不要手改**；约 293 行覆盖三端规模/端点/依赖/测试/反模式 |
+| [snapshot/架构快照.md](03-架构评审/snapshot/架构快照.md) | 机器生成，**不要手改**；约 286 行覆盖三端规模/端点/依赖/测试/反模式 |
+| [evidence/index.md](03-架构评审/evidence/index.md) | **门禁报告归档**：24 份 JSON（H0–H4、J0–J4、P7/P8、A2/A3、四档对照），含大小、结论与 SHA256；由 `tools/archive_evidence.py` 生成，`test-artifacts/` 本身被 gitignore |
 | `tools/arch_snapshot.py` | 快照生成器，零依赖，`python tools/arch_snapshot.py` 直接跑 |
 
 ### 99-v1归档（9 份）
@@ -214,7 +215,7 @@ python tools\docker_deploy.py down                              # 停栈，保�
 python tools\docker_deploy.py build --push --registry registry.example.com/team --tag v1.0.0
 ```
 
-`push` 只做 tag + push + 校验远端 digest，不会启动容器栈；没有 `--registry`/`IMAGE_REGISTRY` 时直接报错退出。已用本机临时 `registry:2` 实测：三个镜像推到 `127.0.0.1:5000/xiaoyi/xiaoyi-{python-ai,java-backend,frontend}:smoke`，`GET /v2/_catalog` 与 `tags/list` 都能查到，digest 与 `buildx imagetools inspect` 一致（证据在 `test-artifacts/docker-deploy-prebuilt.json` 的 `pushedImages`）。
+`push` 只做 tag + push + 校验远端 digest，不会启动容器栈；没有 `--registry`/`IMAGE_REGISTRY` 时直接报错退出。已用本机临时 `registry:2` 实测：三个镜像推到 `127.0.0.1:5000/xiaoyi/xiaoyi-{python-ai,java-backend,frontend}:smoke`，`GET /v2/_catalog` 与 `tags/list` 都能查到，digest 与 `buildx imagetools inspect` 一致（证据在 `docs/03-架构评审/evidence/docker-deploy-prebuilt.json` 的 `pushedImages`）。
 
 每次运行都写 `test-artifacts/docker-deploy-<mode>.json`（含耗时、镜像映射、容器健康、冒烟结果，不写任何口令）。`prebuilt` 模式会先跑 `mvn verify` + `npm run gate -- prebuilt --build`，除非加 `--skip-host-build`。
 
@@ -295,7 +296,7 @@ python tools\write_a3_report.py
 - **跑根门禁前清干净 provider 环境变量**：J6/J7/A1/A2/A3 在进程内装配 app，会继承 shell 环境；带着 `AI_PROVIDER=real` + `MILVUS_URI=http://milvus:19530` 会让它们假失败（实测 112 errors）。要清 `AI_PROVIDER`/`MILVUS_*`/`EMBEDDING_*`/`LLM_*`/`RETRIEVAL_*`/`RERANK_*` 共 20 个键。
 - **一个用户同时最多 99 份资料**：`chunk_id` 形如 `D01-C001`，文档号只有两位。新资料取「最小空闲号」，所以删掉的资料腾出的号会被复用；真满了会明确报「已达上限」而不是悄悄把编号压成 99 撞主键（旧实现踩过，Milvus 只回一句 `code=1100`）。对账只回收「早于本次任务开始」的行，不重排编号——重排会改到并发任务正在用的号。
 
-A2 的完整验收数字见 [06_后端施工单.md](03-架构评审/06_后端施工单.md) §10 与 `test-artifacts/backend-gate-A2.json`；A3 的见 §11 与 `test-artifacts/backend-gate-A3.json`。
+A2 的完整验收数字见 [06_后端施工单.md](03-架构评审/06_后端施工单.md) §10 与 `docs/03-架构评审/evidence/backend-gate-A2.json`；A3 的见 §11 与 `docs/03-架构评审/evidence/backend-gate-A3.json`。
 
 ### 路线 B：我要答辩，得能解释代码
 ```
@@ -352,8 +353,8 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
 | 后端 v2（Java） | **H1–H4 + P0–P8 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、122 个类 / 12099 行、13 张表 Flyway V1–V7、28 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **63 passed** |
 | 后端 v2（Python） | **A1 + A2 + A3 已完成**：`server-ai/` 25 个文件，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider。`test/A2-rag` **21 passed**、`test/A3-hybrid` **23 passed** |
-| 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`test-artifacts/backend-gate-A2.json`） |
-| 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`test-artifacts/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
+| 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`docs/03-架构评审/evidence/backend-gate-A2.json`） |
+| 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`docs/03-架构评审/evidence/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
 | 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped / 181.92s**；mock 档 `J3 J5` **55 passed / 107.98s** |
 
 ## 六、目录与文件对照（代码在哪）

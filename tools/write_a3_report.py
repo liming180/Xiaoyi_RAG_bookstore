@@ -230,6 +230,16 @@ def main() -> int:
                 f"hybrid mrr={gate['modes']['hybrid']['mrr']} rrf mrr={gate['modes']['rrf']['mrr']}"
             )
     print(f"  架构快照 {snapshot_lines} 行")
+    # 报告在 test-artifacts/（被 gitignore），同步归档一份进 docs/.../evidence/ 让数字可核对。
+    # 失败只提示不改变退出码：报告本身已经写好了，归档是附加动作。
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import archive_evidence
+
+        if archive_evidence.archive() != 0:
+            print("  [warn] 归档失败，报告仍已写入 test-artifacts/")
+    except Exception as exc:  # noqa: BLE001 - 归档不该让门禁失败
+        print(f"  [warn] 归档失败：{exc}")
     return 0 if report["pass"] else 1
 
 
