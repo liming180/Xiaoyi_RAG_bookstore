@@ -270,7 +270,32 @@ python tools\docker_deploy.py up --smoke
 - **`/index/status` 的 `embeddingModel` 以 Python manifest 为准**：Java 的 `INDEX_EMBEDDING_MODEL` 只是登记值，真正做向量化的是 Python。两者不一致时顶层字段与 manifest 会自相矛盾（曾出现 `mock-embedding` vs `embedding-3`）。
 - **分块仍是 180/30**：`IndexServiceImpl.status()` 在 `manifest.chunkSize` 与任务值不一致时强制 `needs_rebuild`，J4 也有五处断言钉死 180，所以没按 §14.1 改 500/75。
 
-A2 的完整验收数字见 [06_后端施工单.md](03-架构评审/06_后端施工单.md) §10 与 `test-artifacts/backend-gate-A2.json`。
+#### 路线 A 之四：混合检索（A3，2026-11-08 实测通过）
+
+A3 默认就开着（`RETRIEVAL_MODE=hybrid`），真 RAG 起来之后无需额外步骤。要对比四档效果：
+
+```powershell
+# 四档对照（dense / bm25 / rrf / hybrid），真实 embedding，输出 hit@k / top-1 / MRR
+python tools\a3_compare.py --json test-artifacts\a3-compare-real.json
+
+# 接真重排服务再跑一遍
+$env:RERANK_ENDPOINT='https://open.bigmodel.cn/api/paas/v4/rerank'; $env:RERANK_MODEL='rerank'
+python tools\a3_compare.py --json test-artifacts\a3-compare-rerank.json
+
+# 汇总成报告
+python tools\write_a3_report.py
+```
+
+要点：
+
+- **降级路径必须保序**：`LexicalReranker` 只做并列消歧，不改写融合分。曾按词面覆盖率重排，top-1 从 5/6 掉到 3/6；0.6/0.4 与 0.85/0.15 加权都只有 4/6，都不如不重排。
+- **`HttpReranker` 以服务返回的数组顺序为准**，不按分数二次排序 —— 分数饱和时二次排序等于用 chunk_id 字典序覆盖服务判断。
+- **智谱 rerank 分数饱和**：20 候选极差 < 1e-5，加极差 < 0.01 的饱和检测后自动退回保序融合，`diagnostics.degradeReason` 里会写「饱和」。
+- **`diagnostics` 不进 HTTP 响应**：`InternalRetrieveResult` 是 `additionalProperties: false`，四路候选只在进程内与报告里可见。
+- **跑根门禁前清干净 provider 环境变量**：J6/J7/A1/A2/A3 在进程内装配 app，会继承 shell 环境；带着 `AI_PROVIDER=real` + `MILVUS_URI=http://milvus:19530` 会让它们假失败（实测 112 errors）。要清 `AI_PROVIDER`/`MILVUS_*`/`EMBEDDING_*`/`LLM_*`/`RETRIEVAL_*`/`RERANK_*` 共 20 个键。
+- **一个用户同时最多 99 份资料**：`chunk_id` 形如 `D01-C001`，文档号只有两位。新资料取「最小空闲号」，所以删掉的资料腾出的号会被复用；真满了会明确报「已达上限」而不是悄悄把编号压成 99 撞主键（旧实现踩过，Milvus 只回一句 `code=1100`）。对账只回收「早于本次任务开始」的行，不重排编号——重排会改到并发任务正在用的号。
+
+A2 的完整验收数字见 [06_后端施工单.md](03-架构评审/06_后端施工单.md) §10 与 `test-artifacts/backend-gate-A2.json`；A3 的见 §11 与 `test-artifacts/backend-gate-A3.json`。
 
 ### 路线 B：我要答辩，得能解释代码
 ```
@@ -326,9 +351,10 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 构建产物 | `vendor-ui 798 kB (gzip 252)` + `vendor 189 (68)` + `vendor-vue 114 (44)` + 各页面 chunk |
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
 | 后端 v2（Java） | **H1–H4 + P0–P8 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、122 个类 / 12099 行、13 张表 Flyway V1–V7、28 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **63 passed** |
-| 后端 v2（Python） | **A1 + A2 已完成**：`server-ai/` 22 个文件 / 2178 行，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、防幻觉提示、流式 provider。`test/A2-rag` **17 passed** |
+| 后端 v2（Python） | **A1 + A2 + A3 已完成**：`server-ai/` 25 个文件，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider。`test/A2-rag` **21 passed**、`test/A3-hybrid` **23 passed** |
 | 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`test-artifacts/backend-gate-A2.json`） |
-| 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2` **274 passed / 1 skipped**；mock 档 `J3 J5` **55 passed** |
+| 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`test-artifacts/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
+| 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped / 181.92s**；mock 档 `J3 J5` **55 passed / 107.98s** |
 
 ## 六、目录与文件对照（代码在哪）
 
