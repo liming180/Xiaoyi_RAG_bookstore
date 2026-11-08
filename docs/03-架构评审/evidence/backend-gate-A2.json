@@ -1,0 +1,127 @@
+{
+  "phase": "A2",
+  "name": "真 RAG：切分、嵌入、向量库、检索与引用契约",
+  "pass": true,
+  "timestamp": "2026-11-07T02:20:00+08:00",
+  "gates": [
+    {
+      "key": "a2-suite",
+      "command": "cd test && python -X utf8 -m pytest A2-rag -q",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "passed": 17,
+        "failed": 0,
+        "skipped": 0
+      },
+      "note": "test_ingest_pipeline.py 10 条覆盖标题继承、偏移连续、chunk_id 形状、投毒标记、k 精确控制、跨用户为空、direct 模式无 retrieval 帧；test_citation_shape.py 7 条用 Draft202012Validator 拿 openapi-internal.yaml 逐字段校验真实响应。"
+    },
+    {
+      "key": "real-pipeline-probe",
+      "command": "python test-artifacts/_probe_a2_stack.py（容器栈 + 智谱 embedding-3 + Milvus）",
+      "ok": true,
+      "exitCode": 0,
+      "evidence": [
+        "建库 SUCCEEDED chunks=8 task=226",
+        "top-3：D74-C001 score=0.6630 / D76-C002 0.5812 / D75-C001 0.5733，stage 均为 dense",
+        "跨用户：B 检索到 0 条引用（必须 0）",
+        "SSE 回答 27 字：'每人最多可以借阅4本普通图书，每本借期21天 [1]。'",
+        "引用 3 条；轨迹行 3"
+      ]
+    },
+    {
+      "key": "root-gates-real-provider",
+      "command": "cd test && python -X utf8 -m pytest J0-contract J1-skeleton J2-crud J4-ingest J6-integration J7-isolation A1-ai-skeleton A2-rag -q",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "passed": 274,
+        "failed": 0,
+        "skipped": 1,
+        "elapsedSeconds": 162.32
+      },
+      "note": "skip 是 J1-skeleton/test_envelope_all_routes.py:106 参数集为空，与 A2 无关。"
+    },
+    {
+      "key": "root-gates-mock-provider",
+      "command": "cd test && python -X utf8 -m pytest J3-sse J5-eval -q（AI_MOCK=true 的 java 容器，8081）",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "passed": 55,
+        "failed": 0,
+        "skipped": 0,
+        "elapsedSeconds": 75.94
+      }
+    },
+    {
+      "key": "java-verify",
+      "command": "cd server-java && mvn verify",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "testsPassed": 63,
+        "failed": 0
+      },
+      "note": "IndexServiceImplTest 15 条，含 statusReportsEmbeddingModelFromManifest 与 statusFallsBackToTaskModelWhenManifestIsSilent。"
+    },
+    {
+      "key": "architecture-snapshot",
+      "command": "python tools/arch_snapshot.py",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "lines": 284,
+        "serverAiFiles": 22,
+        "serverAiLines": 2178
+      }
+    }
+  ],
+  "newModules": [
+    "server-ai/app/core/rag/splitter.py：Markdown 标题继承 + 段落/句末边界回退，产出 chunk_id/heading_path/start/end",
+    "server-ai/app/core/rag/embedder.py：HttpEmbedder（分批、429/5xx 重试、400/413 对半拆分、维度自校准）+ MockEmbedder",
+    "server-ai/app/core/vector_store/store.py：MilvusVectorStore / MemoryVectorStore 双实现，user_id + task_id 强过滤",
+    "server-ai/app/core/rag/pipeline.py：引用与轨迹装配，按契约区分 InternalCitation 与 InternalTraceRow 字段集",
+    "server-ai/app/core/rag/prompt.py：防幻觉四条 + enforce_citations 兜底标注",
+    "server-ai/app/core/llm/provider.py：OpenAiProvider 流式解析 + usage 透传"
+  ],
+  "fixedDuringAcceptance": [
+    {
+      "issue": "Milvus upsert 后数据不可见",
+      "rootCause": "store.upsert() 在逐行标量循环里把 task_id 也当行内字段，row.get('task_id') 取不到值就写成空串，覆盖掉刚设好的 task_id",
+      "fix": "新增 ROW_SCALARS（排除 task_id），upsert 改用 ROW_SCALARS"
+    },
+    {
+      "issue": "建库路径两次 flush 让单份资料稳定超过 15s，撞穿 J4 轮询阈值（14 条失败）",
+      "rootCause": "Milvus flush 实测 8–11s，delete_task 与 upsert 各 flush 一次",
+      "fix": "写侧与删侧都不 flush，读侧 search()/count() 声明 consistency_level='Strong'（实测 0.05s 可见），单份资料建库从 19s 降到 6.1–6.3s"
+    },
+    {
+      "issue": "InternalTraceRow 被 JSON Schema 判非法",
+      "rootCause": "轨迹行字段集与引用不同（无 ref、无 score_stage），原实现只 pop 了 ref",
+      "fix": "_as_trace_row 同时 pop score_stage"
+    },
+    {
+      "issue": "Milvus COSINE 返回负分，契约 score 是 0..1",
+      "rootCause": "COSINE 距离可为负",
+      "fix": "_clamp_score() 截断到 [0, 1] 并保留 6 位小数"
+    },
+    {
+      "issue": "/index/status 顶层 embeddingModel 与 manifest 自相矛盾（mock-embedding vs embedding-3）",
+      "rootCause": "status() 用任务登记值，manifestOf() 也读任务值；真正做向量化的是 Python",
+      "fix": "以 manifest.embeddingModel 为准，manifestOf 增加 embeddingModel 参数；补 2 条 Java 用例"
+    },
+    {
+      "issue": "eval_batch 用固定模拟回答打分",
+      "rootCause": "A1 骨架遗留",
+      "fix": "改为真跑 direct/rag 两路，_judge 复刻 Java EvalServiceImpl 的 / 与 | 语义"
+    }
+  ],
+  "knownLimitations": [
+    "Milvus 3.0.0 默认 Bounded 一致性，写后不 flush 时默认读看不到；本项目靠读侧 Strong 规避，若换 Milvus 版本需重验。",
+    "A2 用例走进程内 mock provider + 内存向量库，真实 Milvus 由 test-artifacts/_probe_a2_stack.py 覆盖，该探针未进版本库。",
+    "CI 未起 Milvus，A2 在 CI 里只验切分与引用契约，不验真实向量检索。",
+    "分块默认值仍为 180/30（未采纳 §14.1 的 500/75），因为 Java IndexServiceImpl.status() 与 J4 五处断言都钉死 180。"
+  ],
+  "nextPhase": "A3：BM25 + RRF + rerank（test/A3-hybrid 目前只有 .gitkeep）"
+}

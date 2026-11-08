@@ -1,0 +1,14 @@
+{
+  "phase": "all",
+  "pass": true,
+  "timestamp": 1793989281,
+  "gates": [
+    {
+      "key": "A2",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 15078,
+      "summary": "17 passed in 6.79s"
+    }
+  ]
+}

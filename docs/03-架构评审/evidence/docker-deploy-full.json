@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-11-06T08:07:57.470143+00:00",
+  "mode": "full",
+  "action": "up",
+  "compose": "deploy\\docker-compose.localdb.yml",
+  "database": "host-mysql",
+  "registryPushRequested": false,
+  "hostBuildSkipped": false,
+  "pass": true,
+  "images": {
+    "python-ai": "deploy-python-ai",
+    "java-backend": "deploy-java-backend",
+    "frontend": "deploy-frontend"
+  },
+  "verification": {
+    "http": {
+      "homepage": "UP",
+      "javaHealth": "UP"
+    },
+    "containers": [
+      {
+        "Command": "\"/docker-entrypoint.…\"",
+        "CreatedAt": "2026-11-06 16:06:15 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "",
+        "ID": "fe9e312a575f",
+        "Image": "sha256:8ff06ce2de04847eab70ee71cd295f66c5b0c10b7c9e37d786dec5d87415a759",
+        "Labels": "com.docker.compose.container-number=1,com.docker.compose.replace=frontend-1,com.docker.compose.service=frontend,com.docker.compose.depends_on=java-backend:service_healthy:false,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.localdb.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env,com.docker.compose.project.working_dir=<repo>\\deploy,desktop.docker.io/ports.scheme=v2,maintainer=NGINX Docker Maintainers <docker-maint@nginx.com>,com.docker.compose.config-hash=bb35adb23813496d48596fa0f45ac0952eedd3b7d96d8365879859ab58a1def4,com.docker.compose.image=sha256:61a6c7d1edb83a7a822208cd03ffc1cbcae154d1c8bb5db90b02bf8d90c65c63,com.docker.compose.version=5.6.1,com.docker.compose.oneoff=False,com.docker.compose.project=deploy,desktop.docker.io/ports/80/tcp=:8088",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Name": "deploy-frontend-1",
+        "Names": "deploy-frontend-1",
+        "Networks": "deploy_default",
+        "Ports": "0.0.0.0:8088->80/tcp, [::]:8088->80/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "0.0.0.0",
+            "TargetPort": 80,
+            "PublishedPort": 8088,
+            "Protocol": "tcp"
+          },
+          {
+            "URL": "::",
+            "TargetPort": 80,
+            "PublishedPort": 8088,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "About a minute ago",
+        "Service": "frontend",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up About a minute"
+      },
+      {
+        "Command": "\"java -jar /app/app.…\"",
+        "CreatedAt": "2026-11-06 16:06:10 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "healthy",
+        "ID": "680af9d24b90",
+        "Image": "sha256:1ae30a23de654456d5a7824b782507b6d45d8344a43fb37b3ef4b6c351feb797",
+        "Labels": "com.docker.compose.config-hash=8825856cb90df2d7610cd724939699e1999158373aa3246d943886eebdf8b7bd,com.docker.compose.project=deploy,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.localdb.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env,com.docker.compose.replace=java-backend-1,desktop.docker.io/binds/0/SourceKind=hostFile,desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/8080/tcp=:8080,com.docker.compose.depends_on=python-ai:service_healthy:false,com.docker.compose.oneoff=False,com.docker.compose.project.working_dir=<repo>\\deploy,com.docker.compose.version=5.6.1,org.opencontainers.image.description=The Ubuntu container image maintained by Canonical\n\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\n,com.docker.compose.image=sha256:13e0344570893c145a14f08eceb05b02f3df92d9b99a665c96891c65366d115f,com.docker.compose.service=java-backend,desktop.docker.io/binds/0/Source=<repo>\\server-java\\storage,desktop.docker.io/binds/0/Target=/app/storage,com.docker.compose.container-number=1,org.opencontainers.image.created=2026-10-25T10:26:07.538865+00:00,org.opencontainers.image.title=ubuntu,org.opencontainers.image.version=26.04",
+        "LocalVolumes": "0",
+        "Mounts": "/run/desktop/m…",
+        "Name": "deploy-java-backend-1",
+        "Names": "deploy-java-backend-1",
+        "Networks": "deploy_default",
+        "Ports": "0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "0.0.0.0",
+            "TargetPort": 8080,
+            "PublishedPort": 8080,
+            "Protocol": "tcp"
+          },
+          {
+            "URL": "::",
+            "TargetPort": 8080,
+            "PublishedPort": 8080,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "About a minute ago",
+        "Service": "java-backend",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up About a minute (healthy)"
+      },
+      {
+        "Command": "\"uvicorn app.main:ap…\"",
+        "CreatedAt": "2026-11-06 10:01:22 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "healthy",
+        "ID": "6f2dd99f083a",
+        "Image": "sha256:d2ee6ebfcc7cb443d03c4318932ce418872b4f81f6824090da123320c946a6e0",
+        "Labels": "com.docker.compose.project.working_dir=<repo>\\deploy,com.docker.compose.replace=python-ai-1,desktop.docker.io/ports.scheme=v2,com.docker.compose.config-hash=74f4d60e2b07d64cba288200dd9c9a6d9769f22a5e263bf8fff132c24035b911,com.docker.compose.depends_on=,com.docker.compose.image=sha256:b7c808561057020431b0f4ba3031a9ae1bff3ba901d708125dcc77facdd818ef,com.docker.compose.oneoff=False,com.docker.compose.project=deploy,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.localdb-prebuilt.yml,com.docker.compose.service=python-ai,com.docker.compose.version=5.6.1,com.docker.compose.container-number=1,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env",
+        "LocalVolumes": "1",
+        "Mounts": "deploy_ai-state",
+        "Name": "deploy-python-ai-1",
+        "Names": "deploy-python-ai-1",
+        "Networks": "deploy_default",
+        "Ports": "8000/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "",
+            "TargetPort": 8000,
+            "PublishedPort": 0,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "6 hours ago",
+        "Service": "python-ai",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up 6 hours (healthy)"
+      }
+    ]
+  },
+  "smokeReport": "test-artifacts/compose-smoke.json",
+  "pushedImages": [],
+  "elapsedSeconds": 22.316
+}

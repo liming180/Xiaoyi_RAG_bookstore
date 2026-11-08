@@ -1,0 +1,48 @@
+{
+  "phase": "J1",
+  "pass": true,
+  "timestamp": "2026-11-02T00:25:15+08:00",
+  "gates": [
+    {
+      "key": "actuator-health",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 218
+    },
+    {
+      "key": "mysql-schema",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 139,
+      "tables": [
+        "audit_log",
+        "conversation",
+        "document",
+        "eval_run",
+        "flyway_schema_history",
+        "index_task",
+        "message",
+        "user"
+      ],
+      "missing": [],
+      "hasV1": true
+    },
+    {
+      "key": "routes-envelope",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 1016,
+      "routes": 28
+    },
+    {
+      "key": "contract",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 12639,
+      "counts": {
+        "passed": 140,
+        "failed": 0
+      }
+    }
+  ]
+}

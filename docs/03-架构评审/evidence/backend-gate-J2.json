@@ -1,0 +1,73 @@
+{
+  "phase": "J2",
+  "pass": true,
+  "timestamp": "2026-11-02T17:24:16+08:00",
+  "gates": [
+    {
+      "key": "upload-on-disk",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 547,
+      "documentId": "92",
+      "status": "UPLOADING",
+      "title": "借阅规则",
+      "name": "02_借阅规则.md",
+      "storedPath": "<repo>\\server-java\\storage\\92\\02_借阅规则.md",
+      "dbRows": [
+        "92\tUPLOADING"
+      ]
+    },
+    {
+      "key": "upload-rejections",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 187,
+      "oversize": {
+        "reason": "文件超过 2MB",
+        "expected": "文件超过 2MB"
+      },
+      "pdf": {
+        "reason": "只接受 .md / .txt 文件",
+        "expected": "只接受 .md / .txt 文件"
+      },
+      "blank": {
+        "reason": "文件没有正文",
+        "expected": "文件没有正文"
+      },
+      "non-utf8": {
+        "reason": "文件编码不是 UTF-8",
+        "expected": "文件编码不是 UTF-8"
+      },
+      "path-only": {
+        "reason": "只接受 .md / .txt 文件",
+        "expected": "只接受 .md / .txt 文件"
+      },
+      "traversal": {
+        "accepted": [
+          "evil.md"
+        ]
+      }
+    },
+    {
+      "key": "clear-keeps-conversation",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 343,
+      "conversationId": "106",
+      "messagesBefore": "3",
+      "messagesAfterAlive": "0",
+      "messagesAfterTotal": "3",
+      "conversationsAlive": "1"
+    },
+    {
+      "key": "contract",
+      "ok": true,
+      "exitCode": 0,
+      "elapsedMs": 15452,
+      "counts": {
+        "passed": 170,
+        "failed": 0
+      }
+    }
+  ]
+}

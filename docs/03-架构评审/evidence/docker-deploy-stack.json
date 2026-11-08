@@ -1,0 +1,164 @@
+{
+  "timestamp": "2026-11-06T08:50:38.846890+00:00",
+  "mode": "stack",
+  "action": "up",
+  "compose": "deploy\\docker-compose.yml",
+  "database": "container-mysql",
+  "registryPushRequested": false,
+  "hostBuildSkipped": false,
+  "pass": true,
+  "images": {
+    "python-ai": "deploy-python-ai",
+    "java-backend": "deploy-java-backend",
+    "frontend": "deploy-frontend"
+  },
+  "verification": {
+    "http": {
+      "homepage": "UP",
+      "javaHealth": "UP"
+    },
+    "containers": [
+      {
+        "Command": "\"/docker-entrypoint.…\"",
+        "CreatedAt": "2026-11-06 16:50:53 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "",
+        "ID": "7484cdea1689",
+        "Image": "deploy-frontend",
+        "Labels": "com.docker.compose.project=deploy,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env,com.docker.compose.service=frontend,com.docker.compose.version=5.6.1,desktop.docker.io/ports/80/tcp=:8088,com.docker.compose.config-hash=bb35adb23813496d48596fa0f45ac0952eedd3b7d96d8365879859ab58a1def4,com.docker.compose.container-number=1,com.docker.compose.depends_on=java-backend:service_healthy:false,com.docker.compose.image=sha256:61a6c7d1edb83a7a822208cd03ffc1cbcae154d1c8bb5db90b02bf8d90c65c63,com.docker.compose.oneoff=False,com.docker.compose.project.working_dir=<repo>\\deploy,desktop.docker.io/ports.scheme=v2,maintainer=NGINX Docker Maintainers <docker-maint@nginx.com>",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Name": "deploy-frontend-1",
+        "Names": "deploy-frontend-1",
+        "Networks": "deploy_default",
+        "Ports": "0.0.0.0:8088->80/tcp, [::]:8088->80/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "0.0.0.0",
+            "TargetPort": 80,
+            "PublishedPort": 8088,
+            "Protocol": "tcp"
+          },
+          {
+            "URL": "::",
+            "TargetPort": 80,
+            "PublishedPort": 8088,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "2 minutes ago",
+        "Service": "frontend",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up 2 seconds"
+      },
+      {
+        "Command": "\"java -jar /app/app.…\"",
+        "CreatedAt": "2026-11-06 16:50:53 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "healthy",
+        "ID": "831cdeada835",
+        "Image": "deploy-java-backend",
+        "Labels": "org.opencontainers.image.title=ubuntu,desktop.docker.io/binds/0/Source=<repo>\\server-java\\storage,desktop.docker.io/binds/0/SourceKind=hostFile,com.docker.compose.project=deploy,org.opencontainers.image.version=26.04,com.docker.compose.container-number=1,com.docker.compose.depends_on=mysql:service_healthy:false,python-ai:service_healthy:false,com.docker.compose.image=sha256:13e0344570893c145a14f08eceb05b02f3df92d9b99a665c96891c65366d115f,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env,com.docker.compose.project.working_dir=<repo>\\deploy,desktop.docker.io/binds/0/Target=/app/storage,com.docker.compose.config-hash=9eba4e5cf2b024cd4482c7ea8a5221f2bac5de25dd3019029c860c2148370273,com.docker.compose.service=java-backend,com.docker.compose.version=5.6.1,desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/8080/tcp=:8080,org.opencontainers.image.created=2026-10-25T10:26:07.538865+00:00,org.opencontainers.image.description=The Ubuntu container image maintained by Canonical\n\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\n",
+        "LocalVolumes": "0",
+        "Mounts": "/run/desktop/m…",
+        "Name": "deploy-java-backend-1",
+        "Names": "deploy-java-backend-1",
+        "Networks": "deploy_default",
+        "Ports": "0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "0.0.0.0",
+            "TargetPort": 8080,
+            "PublishedPort": 8080,
+            "Protocol": "tcp"
+          },
+          {
+            "URL": "::",
+            "TargetPort": 8080,
+            "PublishedPort": 8080,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "2 minutes ago",
+        "Service": "java-backend",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up About a minute (healthy)"
+      },
+      {
+        "Command": "\"docker-entrypoint.s…\"",
+        "CreatedAt": "2026-11-06 16:50:52 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "healthy",
+        "ID": "ecd433c1a82c",
+        "Image": "mysql:8.0",
+        "Labels": "com.docker.compose.config-hash=783b6630c022a74fb404faa840d64e3fa22c5ea6f4fc0cc35fa7de3d48a2be73,com.docker.compose.depends_on=,com.docker.compose.image=sha256:62fb722c78b24245ddff1796a0fcee4a49cc5b87e0aaaf20c92d1da9e0a2497b,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env,com.docker.compose.project.working_dir=<repo>\\deploy,desktop.docker.io/ports.scheme=v2,com.docker.compose.container-number=1,com.docker.compose.oneoff=False,com.docker.compose.project=deploy,com.docker.compose.service=mysql,com.docker.compose.version=5.6.1",
+        "LocalVolumes": "1",
+        "Mounts": "deploy_mysql-d…",
+        "Name": "deploy-mysql-1",
+        "Names": "deploy-mysql-1",
+        "Networks": "deploy_default",
+        "Ports": "3306/tcp, 33060/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "",
+            "TargetPort": 3306,
+            "PublishedPort": 0,
+            "Protocol": "tcp"
+          },
+          {
+            "URL": "",
+            "TargetPort": 33060,
+            "PublishedPort": 0,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "2 minutes ago",
+        "Service": "mysql",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up 2 minutes (healthy)"
+      },
+      {
+        "Command": "\"uvicorn app.main:ap…\"",
+        "CreatedAt": "2026-11-06 16:50:52 +0800 CST",
+        "Engine": "",
+        "ExitCode": 0,
+        "Health": "healthy",
+        "ID": "dbe5ed8d2763",
+        "Image": "deploy-python-ai",
+        "Labels": "com.docker.compose.service=python-ai,com.docker.compose.version=5.6.1,com.docker.compose.config-hash=74f4d60e2b07d64cba288200dd9c9a6d9769f22a5e263bf8fff132c24035b911,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:b7c808561057020431b0f4ba3031a9ae1bff3ba901d708125dcc77facdd818ef,com.docker.compose.project.working_dir=<repo>\\deploy,desktop.docker.io/ports.scheme=v2,com.docker.compose.oneoff=False,com.docker.compose.project=deploy,com.docker.compose.project.config_files=<repo>\\deploy\\docker-compose.yml,com.docker.compose.project.environment_file=<repo>\\deploy\\local-mysql.env",
+        "LocalVolumes": "1",
+        "Mounts": "deploy_ai-state",
+        "Name": "deploy-python-ai-1",
+        "Names": "deploy-python-ai-1",
+        "Networks": "deploy_default",
+        "Ports": "8000/tcp",
+        "Project": "deploy",
+        "Publishers": [
+          {
+            "URL": "",
+            "TargetPort": 8000,
+            "PublishedPort": 0,
+            "Protocol": "tcp"
+          }
+        ],
+        "RunningFor": "2 minutes ago",
+        "Service": "python-ai",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up 2 minutes (healthy)"
+      }
+    ]
+  },
+  "smokeReport": "test-artifacts/compose-smoke.json",
+  "pushedImages": [],
+  "elapsedSeconds": 169.324
+}

@@ -1,0 +1,49 @@
+{
+  "generatedAt": 1793810345,
+  "base": "http://127.0.0.1:8080",
+  "items": [
+    {
+      "item": "C",
+      "name": "并发建库幂等（同一用户同时两次 rebuild）",
+      "ok": true,
+      "expected": "一个 200 + 一个 409/40903，库层唯一键 uk_index_task_active_user 兜底",
+      "statuses": [
+        200,
+        409
+      ],
+      "acceptedTaskId": "138",
+      "rejected": {
+        "code": 40903,
+        "message": "已有建库任务在执行",
+        "data": null,
+        "timestamp": 1793810329
+      },
+      "note": "契约不接受客户端幂等键，并发语义是「只受理一个」而非「返回同一 task_id」；同一 submission_key 的重放复用由轮询器 triggerParse 保证。"
+    },
+    {
+      "item": "F",
+      "name": "实际 /v3/api-docs 与契约 operationId 对齐",
+      "ok": true,
+      "expected": "200，且契约 28 个 operationId 在实现侧都存在",
+      "httpStatus": 200,
+      "pathCount": 25,
+      "operationCount": 29,
+      "contractCount": 28,
+      "missingInImplementation": [],
+      "extraInImplementation": [
+        "health"
+      ]
+    },
+    {
+      "item": "D",
+      "name": "python 重启后中断任务置 FAILED",
+      "ok": true,
+      "expected": "status=FAILED，error 含「服务重启导致任务中断，请重新提交解析任务」",
+      "pythonRestarted": true,
+      "taskId": "141",
+      "documentId": 231,
+      "finalStatus": "FAILED",
+      "finalError": "服务重启导致任务中断，请重新提交解析任务"
+    }
+  ]
+}
