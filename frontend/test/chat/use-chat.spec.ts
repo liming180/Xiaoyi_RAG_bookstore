@@ -150,4 +150,21 @@ describe('useConversation 装载（F04）', () => {
     expect(conv.messages.value).toHaveLength(0);
     expect(conv.isEmpty.value).toBe(true);
   });
+
+  it('N2：刷新/切回会话后追问 chips 仍在（落库的那一半）', async () => {
+    // 先走一轮 SSE，让服务端 mock 把 assistant 消息（含 suggestions）写进 state
+    const chat = useChat({ conversationId: () => 'c-demo' });
+    await chat.send('普通图书最多同时借阅几本借多久？', 'rag', 3);
+    const streamed = chat.state.value.suggestions;
+    expect(streamed.length).toBeGreaterThan(0);
+
+    // 模拟刷新：重新装载（丢掉流式状态，只能从接口拉历史）
+    const conv = useConversation(() => 'c-demo');
+    await conv.load();
+
+    const assistant = conv.messages.value.filter((m) => m.role === 'assistant');
+    expect(assistant.length).toBeGreaterThan(0);
+    // 关键：`done.suggestions` 只覆盖「刚刚生成完那一刻」，能回放才说明真的落库了
+    expect(assistant[assistant.length - 1]!.suggestions).toEqual(streamed);
+  });
 });

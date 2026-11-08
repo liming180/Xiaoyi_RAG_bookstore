@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 from ..core.llm.provider import LlmProvider
 from ..core.rag.prompt import enforce_citations
 from ..schemas.models import ChatRequest
-from . import ingest
+from . import ingest, suggestions
 
 
 def _frame(event: str, data: dict[str, Any]) -> str:
@@ -64,7 +64,15 @@ async def sse_events(user_id: int, req: ChatRequest, provider: LlmProvider) -> A
         "usage": provider.usage(req.question, answer),
         "elapsed_ms": int((time.perf_counter() - started) * 1000),
         "degraded": False,
-        "suggestions": ["可以继续了解吗？"],
+        # N2：追问推荐真生成。必须在 token 全部推完之后才问 —— 不知道答了什么，
+        # 就不知道用户接下来会问什么。失败一律空数组，不影响本帧其它字段。
+        #
+        # direct 模式不给推荐：没有检索资料，就没有「资料里有据可答」的追问可推，
+        # 编几条等于让用户点进去问一个资料答不了的问题。Java 侧 MockAiClient 同一规则。
+        "suggestions": (
+            [] if req.mode == "direct"
+            else await suggestions.generate(provider, req.question, answer, citations)
+        ),
     }
     if req.mode == "both":
         done["direct_message_id"] = "py-direct-" + uuid.uuid4().hex[:8]

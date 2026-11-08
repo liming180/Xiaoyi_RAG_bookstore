@@ -23,7 +23,11 @@ def test_experiment_skips_invalid_overlap_and_blocks_conflicts(api, java_client,
         import json
         assert json.loads(raw)['code'] == 40901
         result = finished_experiment(experiment['id'])
-        assert time.monotonic() - started < 5, 'two experiment groups must finish within five seconds with mock AI'
+        # N1 之后每组都要先重建索引（本用例两组同参数，所以重建两次：首次对齐 200/100、
+        # 收尾恢复 180/30），mock 档每次约 4 秒（MockAiClient 按轮询次数推进）。原来那条
+        # 「< 5 秒」的前置条件已经不成立 —— 它写的时候实验根本不重建索引。
+        # 这里换成一条宽松但仍有意义的上界：能失败的是「卡住」，不是「比 5 秒慢」。
+        assert time.monotonic() - started < 90, '两组实验（含两次重建）应在 90 秒内跑完'
         assert result['finishedGroups'] == result['totalGroups'] == 2
         assert result['progress'] == 100
         report = api('GET', f"/eval/experiments/{experiment['id']}/report")

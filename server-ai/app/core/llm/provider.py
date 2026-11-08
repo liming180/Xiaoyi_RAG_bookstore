@@ -35,6 +35,26 @@ class LlmProvider(ABC):
     @abstractmethod
     def usage(self, question: str, answer: str) -> dict[str, int]: ...
 
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int = 200,
+    ) -> str:
+        """一次性（非流式）补全，返回完整文本。
+
+        N2 的追问推荐需要它：流式接口只适合「边生成边展示」，而推荐是最终 JSON
+        数组，攒完再解析才对。默认实现抛 NotImplementedError，让没实现的 provider
+        在门禁里立刻暴露，而不是静默返回空串（那会让「推荐没生成」看起来像
+        「模型没话说」）。
+
+        @param messages OpenAI 兼容 messages
+        @param temperature 采样温度
+        @param max_tokens 输出上限
+        @return 完整文本
+        """
+        raise NotImplementedError(f"{type(self).__name__} 未实现 complete()")
+
 
 class MockProvider(LlmProvider):
     """离线模板回答：不联网、不随机，门禁断言可以写死。"""
@@ -53,6 +73,40 @@ class MockProvider(LlmProvider):
 
     def usage(self, question: str, answer: str) -> dict[str, int]:
         return {"prompt_tokens": len(question), "completion_tokens": len(answer)}
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int = 200,
+    ) -> str:
+        """从 prompt 里取回本轮问题，返回确定性的 JSON 数组。
+
+        为什么让 mock 去解析 prompt：追问推荐的输入只有 prompt，如果 mock 从别处
+        取问题，那么「生成结果是否随问题变化」这条断言就没有说服力 —— 它证明不了
+        调用方真的把问题传进来了。
+
+        @param messages 提示词
+        @param temperature 采样温度（mock 忽略）
+        @param max_tokens 输出上限（mock 忽略）
+        @return JSON 数组文本
+        """
+        from ...services.suggestions import mock_suggestions
+
+        question = ""
+        for message in messages:
+            # 只认 user 消息：system 里也写着「【本轮问题】」这个标记（那是给模型看的
+            # 指代说明），先匹配到它就会把整段说明当成问题，推荐全都一样。
+            if message.get("role") != "user":
+                continue
+            content = message.get("content") or ""
+            marker = "【本轮问题】"
+            if marker in content:
+                tail = content.split(marker, 1)[1]
+                question = tail.split("\n", 1)[0].strip()
+                break
+        items = mock_suggestions(question)
+        return json.dumps(items, ensure_ascii=False)
 
 
 class OpenAiProvider(LlmProvider):
@@ -130,6 +184,45 @@ class OpenAiProvider(LlmProvider):
         if self._last_usage:
             return dict(self._last_usage)
         return {"prompt_tokens": len(question), "completion_tokens": len(answer)}
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int = 200,
+    ) -> str:
+        """一次性补全：温度 0.3、输出上限 200 token，与 N2 提示词的要求一致。
+
+        刻意不复用 `answer()` 的流式路径：追问推荐需要完整 JSON 才能解析，
+        把流拼起来再 parse 会多出「流中途断了怎么算」的分支，收益为零。
+        """
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._endpoint}/chat/completions",
+                json=payload,
+                headers=self._headers(),
+            )
+            if response.status_code in (401, 403):
+                raise RuntimeError(f"LLM 鉴权失败（HTTP {response.status_code}）")
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"LLM 调用失败（HTTP {response.status_code}）："
+                    f"{response.text[:200]}"
+                )
+            body = response.json()
+        choices = body.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        return content if isinstance(content, str) else ""
 
 
 def provider_from_settings(settings: Settings) -> LlmProvider:

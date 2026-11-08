@@ -99,7 +99,9 @@ def test_list_messages_returns_contract_shape(java_client, clean_db):
         assert set(row) == MESSAGE_KEYS, f"字段集不对：{sorted(row)}"
         assert row["role"] in ("user", "assistant")
         assert isinstance(row["citations"], list), "citations 必须是数组（空也要给 []）"
-        assert row["suggestions"] == [], "J2 阶段 suggestions 恒为空数组"
+        # 直插库的行没有 suggestions_json（N2 之前的列），读侧必须降级成 [] 而不是 null：
+        # 契约里 Message.suggestions 是 required 的数组，给 null 直接违约。
+        assert row["suggestions"] == [], "没有 suggestions_json 的历史行应回空数组"
     assert [row["content"] for row in rows] == [
         "读书会几点开始？",
         "周六 14:00 至 16:00。",

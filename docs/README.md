@@ -352,11 +352,12 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 浏览器实测 | 冒烟 7 项 + CDP 回归 10 场景全 PASS，**21 张截图** |
 | 构建产物 | `vendor-ui 798 kB (gzip 252)` + `vendor 189 (68)` + `vendor-vue 114 (44)` + 各页面 chunk |
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
-| 后端 v2（Java） | **H1–H4 + P0–P8 + A2/A3 + N1 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、115 个主类 / 9900 行（含测试 124 类 / 11802 行）、13 张表 Flyway V1–V7、29 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **71 passed** |
-| 后端 v2（Python） | **A1 + A2 + A3 + N1 已完成**：`server-ai/` 25 个文件 / 2611 行，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider。`test/A2-rag` **21 passed**、`test/A3-hybrid` **29 passed**（N1 新增 `test_options_rerank.py` 6 条） |
+| 后端 v2（Java） | **H1–H4 + P0–P8 + A2/A3 + N1/N2 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、115 个主类 / 10017 行、14 张表 Flyway V1–V8、29 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **74 passed** |
+| 后端 v2（Python） | **A1 + A2 + A3 + N1/N2 已完成**：`server-ai/` 26 个文件 / 2853 行，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider、追问推荐。`test/A1-ai-skeleton` **24 passed**、`test/A2-rag` **21 passed**、`test/A3-hybrid` **29 passed** |
 | 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`docs/03-架构评审/evidence/backend-gate-A2.json`） |
 | 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`docs/03-架构评审/evidence/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
 | 参数实验（E3 / N1） | 四根轴从装饰变成真执行：每组先按本组 `chunkSize`/`overlap` 重建索引再评测、跑完恢复 180/30、实验期间 `POST /index/rebuild` 回 40902、组数上限 8、`metrics.effective` 如实标 `summary=false`。`test/J5-eval` **29 passed**、`test/A3-hybrid` **29 passed**、Java **71 passed**、前端 **309 passed**（`docs/03-架构评审/evidence/backend-gate-N1.json`） |
+| 追问推荐（B1 / N2） | 从硬编码一句变成真生成 + 落库回放：`done.suggestions` 1–3 条随问题变化、刷新后 `GET /messages` 仍带 chips、direct 模式给空数组、生成失败（超时/异常/脏 JSON）一律降级不抛。`test/A1-ai-skeleton` **24 passed**、`test/J3-sse` **38 passed**、Java **74 passed**、前端 **310 passed**（`docs/03-架构评审/evidence/backend-gate-N2.json`） |
 | 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped**，9 阶段合计 217.22s；mock 档 `J3 J5` **55 passed**，合计 82.45s。两轮由 `test/run_all.py` 合并成一份 `backend-gate-all.json`，覆盖 11/11 阶段（`partial=false`），每条 gate 带 `ranAt` 标明属于哪一轮 |
 
 ## 六、目录与文件对照（代码在哪）

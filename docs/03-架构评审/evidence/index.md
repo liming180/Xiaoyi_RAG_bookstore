@@ -42,6 +42,7 @@ python tools\archive_evidence.py
 | `backend-gate-J3.json` | 2,134 B | pass · 7 个门禁 | `41068a23087e2140` |
 | `backend-gate-J4.json` | 2,462 B | pass · 5 个门禁 | `7fe65e3654848d5b` |
 | `backend-gate-N1.json` | 7,215 B | pass · 5 个门禁 | `eb5f555349bdb17a` |
+| `backend-gate-N2.json` | 8,195 B | pass · 8 个门禁 | `078ae79eb3edff1f` |
 | `backend-gate-P7.json` | 13,732 B | pass | `a987df2de772c69a` |
 | `backend-gate-P8.json` | 11,228 B | pass · 10 个门禁 | `957575d0ecfda8af` |
 | `compose-smoke.json` | 514 B | pass | `e7aea915f0a82dc6` |

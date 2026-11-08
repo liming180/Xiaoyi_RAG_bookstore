@@ -199,7 +199,9 @@ public class ConversationServiceImpl implements ConversationService {
                 jsonCodec.readUsage(entity.getUsageJson()),
                 entity.getElapsedMs() == null ? 0L : entity.getElapsedMs(),
                 Boolean.TRUE.equals(entity.getDegraded()),
-                List.of(),
+                // N2：从 suggestions_json 读回。null（N2 之前的历史行）降级成空列表，
+                // 契约里 Message.suggestions 是 required 数组，给 null 会直接违约。
+                jsonCodec.readSuggestions(entity.getSuggestionsJson()),
                 entity.getFeedback(),
                 null);
     }

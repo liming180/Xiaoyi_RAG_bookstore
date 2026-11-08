@@ -22,6 +22,7 @@ public interface ChatPersistService {
      * @param usage token 用量，可空
      * @param elapsedMs 耗时毫秒
      * @param degraded 是否走了降级路径
+     * @param suggestions 追问推荐（N2），可空／空列表；落库后刷新页面仍能回放 chips
      * @return 助手消息的数据库 id
      */
     Long persistTurn(
@@ -30,5 +31,6 @@ public interface ChatPersistService {
             java.util.List<AiCitation> citations,
             java.util.Map<String, Integer> usage,
             long elapsedMs,
-            boolean degraded);
+            boolean degraded,
+            java.util.List<String> suggestions);
 }

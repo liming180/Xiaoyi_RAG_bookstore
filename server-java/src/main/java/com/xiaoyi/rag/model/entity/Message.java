@@ -55,6 +55,15 @@ public class Message {
     @Column(name = "usage_json", columnDefinition = "JSON")
     private String usageJson;
 
+    /**
+     * 追问推荐（N2），库里是 MySQL JSON 类型，这里存 JSON 原文。
+     *
+     * <p>允许 null：N2 之前的历史消息没有这一列，它们就该保持 null 而不是 "[]"。 读侧统一走 {@code
+     * MessageJsonCodec.readSuggestions}，null 与脏数据都降级成空列表。
+     */
+    @Column(name = "suggestions_json", columnDefinition = "JSON")
+    private String suggestionsJson;
+
     @Column(name = "elapsed_ms")
     private Long elapsedMs;
 
@@ -157,6 +166,14 @@ public class Message {
 
     public void setUsageJson(String usageJson) {
         this.usageJson = usageJson;
+    }
+
+    public String getSuggestionsJson() {
+        return suggestionsJson;
+    }
+
+    public void setSuggestionsJson(String suggestionsJson) {
+        this.suggestionsJson = suggestionsJson;
     }
 
     public Long getElapsedMs() {

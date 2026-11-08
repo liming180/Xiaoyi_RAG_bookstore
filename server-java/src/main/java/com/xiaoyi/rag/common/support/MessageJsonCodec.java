@@ -27,6 +27,8 @@ public class MessageJsonCodec {
 
     private static final TypeReference<Map<String, Integer>> USAGE_MAP = new TypeReference<>() {};
 
+    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+
     private final ObjectMapper objectMapper;
 
     public MessageJsonCodec(ObjectMapper objectMapper) {
@@ -103,6 +105,31 @@ public class MessageJsonCodec {
         } catch (Exception ex) {
             log.warn("JSON 序列化失败，落库为 null：{}", ex.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * 读追问推荐（N2）。
+     *
+     * <p>null / 空串 / 脏数据一律回空列表：契约里 {@code Message.suggestions} 是 required 的数组， 给 null
+     * 会直接违约，而历史行本来就没有这一列，宁可不显示 chips 也不能让整个消息列表接口 500。
+     *
+     * @param json 库里的 JSON 原文
+     * @return 追问列表，永不为 null
+     */
+    public List<String> readSuggestions(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<String> parsed = objectMapper.readValue(json, STRING_LIST);
+            if (parsed == null) {
+                return List.of();
+            }
+            return parsed.stream().filter(item -> item != null && !item.isBlank()).toList();
+        } catch (Exception ex) {
+            log.warn("suggestions_json 解析失败，降级为空列表：{}", ex.getMessage());
+            return List.of();
         }
     }
 }

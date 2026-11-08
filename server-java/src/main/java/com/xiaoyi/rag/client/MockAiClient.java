@@ -73,8 +73,19 @@ public class MockAiClient implements AiServiceClient {
     private static final List<String> TOKENS =
             List.of("资料显示，", "读书会通常在", "每周六 14:00", "至 16:00 举行，", "地点在社区文化中心二层。");
 
-    private static final List<String> SUGGESTIONS =
-            List.of("报名最晚什么时候截止？", "普通图书一次能借几本？", "讨论空间需要提前多久预约？");
+    /**
+     * 追问推荐模板（N2）：`{head}` 用问题前 8 个字填充。
+     *
+     * <p>与 `server-ai/app/services/suggestions.py` 的 `_MOCK_TEMPLATES` **逐字一致**。两边必须同步改 —— mock
+     * 比真实后端宽松或更严，都会让门禁在 mock 档全绿、真实档全挂（反模式清单第 3 条）。
+     *
+     * <p>为什么不用固定一句「可以继续了解吗？」：常量永远等于常量，「推荐是否真的生成」这件事 就无法被门禁验证。J3 的用例断言「两个不同问题的推荐不完全相同」，靠的就是这里随问题变化。
+     */
+    private static final List<String> SUGGESTION_TEMPLATES =
+            List.of("{head}还有哪些规定？", "{head}有例外情况吗？", "{head}具体怎么操作？");
+
+    /** 追问推荐的条数上限，与 `xiaoyi.chat.max-suggestions` 默认值一致。 */
+    private static final int MAX_SUGGESTIONS = 3;
 
     /** 假引用池：形状与内部契约 InternalCitation 一致（snake_case 语义由字段顺序体现）。 */
     private static final List<AiCitation> CITATION_POOL =
@@ -186,6 +197,9 @@ public class MockAiClient implements AiServiceClient {
         for (String token : answerTokens) {
             script.add(() -> listener.onEvent(AiStreamEvent.token(token)));
         }
+        // N2：推荐随问题变化，且 direct 模式不给（与 Python 侧 `suggestions.generate`
+        // 在 direct 时无从推断追问的语义一致 —— 没有检索资料就没有「有据可答」的追问）。
+        List<String> suggestions = "direct".equals(mode) ? List.of() : mockSuggestions(request);
         script.add(
                 () -> {
                     Map<String, Object> usage = new LinkedHashMap<>();
@@ -197,7 +211,7 @@ public class MockAiClient implements AiServiceClient {
                                     usage,
                                     stepDelay * script.size(),
                                     false,
-                                    SUGGESTIONS,
+                                    suggestions,
                                     "both".equals(mode) ? "m-direct-" + sequence.get() : null,
                                     "both".equals(mode) ? "（直答）读书会每周六下午举行。" : null));
                     log.debug("MockAiClient 推完一轮事件 mode={} k={}", mode, topK);
@@ -228,6 +242,43 @@ public class MockAiClient implements AiServiceClient {
                 }
             }
         };
+    }
+
+    /**
+     * mock 追问推荐：按问题前 8 个字套模板。
+     *
+     * <p>与 `server-ai/app/services/suggestions.py` 的 `mock_suggestions()` 同一套规则 —— 去句末标点、取前 8
+     * 字、套三条模板、每条截到 20 字、去重、去掉与原问题相同的项。 两边不一致的话，「mock 档通过、真实档挂」就是迟早的事。
+     *
+     * @param request 内部契约请求，可为 null
+     * @return 追问列表；问题为空时返回空列表
+     */
+    private static List<String> mockSuggestions(AiChatRequest request) {
+        String question = request == null || request.question() == null ? "" : request.question();
+        String stem = question.strip();
+        while (!stem.isEmpty() && "？?。.！!～~ \t\r\n".indexOf(stem.charAt(stem.length() - 1)) >= 0) {
+            stem = stem.substring(0, stem.length() - 1);
+        }
+        if (stem.isEmpty()) {
+            return List.of();
+        }
+        String head = stem.length() <= 8 ? stem : stem.substring(0, 8);
+        List<String> result = new ArrayList<>(MAX_SUGGESTIONS);
+        for (String template : SUGGESTION_TEMPLATES) {
+            String candidate = template.replace("{head}", head);
+            if (candidate.length() > 20) {
+                candidate = candidate.substring(0, 20);
+            }
+            if (!candidate.isEmpty()
+                    && !candidate.equals(question)
+                    && !result.contains(candidate)) {
+                result.add(candidate);
+            }
+            if (result.size() >= MAX_SUGGESTIONS) {
+                break;
+            }
+        }
+        return List.copyOf(result);
     }
 
     /** 确定性联调答案；仅 mock provider 使用，不承担真实检索或生成逻辑。 */

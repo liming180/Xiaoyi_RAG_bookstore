@@ -331,6 +331,10 @@ public class ChatServiceImpl implements ChatService {
         }
         Map<String, Integer> usage =
                 upstreamDone == null ? null : normalizeUsage(upstreamDone.usage());
+        // N2：追问推荐要在落库时就带上，否则刷新页面 chips 全丢（done 帧只覆盖「此刻」）。
+        // 截断只做一次：落库与 done 帧必须给出同一份列表，两处各自截断会出现
+        // 「气泡上三条、刷新后变两条」这种只在上限被改小时才复现的怪现象。
+        List<String> suggestions = suggestionsOf(upstreamDone);
         try {
             persistExecutor.execute(
                     () -> {
@@ -338,8 +342,13 @@ public class ChatServiceImpl implements ChatService {
                         try {
                             assistantId =
                                     persistService.persistTurn(
-                                            context, content, citations, usage, elapsedMs,
-                                            degraded);
+                                            context,
+                                            content,
+                                            citations,
+                                            usage,
+                                            elapsedMs,
+                                            degraded,
+                                            suggestions);
                         } catch (RuntimeException ex) {
                             // H3：落库失败不能发「成功 done」。前端拿到 done 就会把这条回答当成已保存，
                             // 之后拉 trace 必然 404，用户看到的是「检索过程丢失」且刷新即丢整轮对话。
@@ -348,7 +357,14 @@ public class ChatServiceImpl implements ChatService {
                             sink.complete();
                             return;
                         }
-                        emitDone(sink, upstreamDone, assistantId, usage, elapsedMs, degraded);
+                        emitDone(
+                                sink,
+                                upstreamDone,
+                                assistantId,
+                                usage,
+                                elapsedMs,
+                                degraded,
+                                suggestions);
                         sink.complete();
                     });
         } catch (RuntimeException rejected) {
@@ -386,13 +402,8 @@ public class ChatServiceImpl implements ChatService {
             Long assistantId,
             Map<String, Integer> usage,
             long elapsedMs,
-            boolean degraded) {
-        List<String> suggestions =
-                upstreamDone == null || upstreamDone.suggestions() == null
-                        ? List.of()
-                        : upstreamDone.suggestions().stream()
-                                .limit(properties.getChat().getMaxSuggestions())
-                                .toList();
+            boolean degraded,
+            List<String> suggestions) {
         String messageId = String.valueOf(assistantId);
         sink.emit(
                 new ChatStreamFrame(
@@ -405,6 +416,24 @@ public class ChatServiceImpl implements ChatService {
                                 suggestions,
                                 upstreamDone == null ? null : upstreamDone.directMessageId(),
                                 upstreamDone == null ? null : upstreamDone.directContent())));
+    }
+
+    /**
+     * 本轮追问推荐，按 {@code xiaoyi.chat.max-suggestions} 截断。
+     *
+     * <p>降级路径（{@code upstreamDone == null}）返回空列表：上游根本没回 done， 没有任何推荐可用，编造几条等于假装推荐生成了。
+     *
+     * @param upstreamDone 上游 done 事件，可为 null
+     * @return 追问列表，永不为 null
+     */
+    private List<String> suggestionsOf(AiStreamEvent upstreamDone) {
+        if (upstreamDone == null || upstreamDone.suggestions() == null) {
+            return List.of();
+        }
+        return upstreamDone.suggestions().stream()
+                .filter(item -> item != null && !item.isBlank())
+                .limit(properties.getChat().getMaxSuggestions())
+                .toList();
     }
 
     /**

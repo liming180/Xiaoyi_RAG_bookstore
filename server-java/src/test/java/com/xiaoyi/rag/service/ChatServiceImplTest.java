@@ -87,7 +87,7 @@ class ChatServiceImplTest {
     @Test
     @DisplayName("落库抛异常：发 error(50000)，不发 done，也不编造 messageId")
     void persistFailureEmitsErrorInsteadOfDone() {
-        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(false)))
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(false), any()))
                 .thenThrow(new IllegalStateException("数据库连接池耗尽"));
         AiServiceClient.StreamHandle handle = AiServiceClient.StreamHandle.NOOP;
         when(ai.chatStream(eq(OWNER), any(), any())).thenReturn(handle);
@@ -129,7 +129,7 @@ class ChatServiceImplTest {
         assertThat(sink.errors()).hasSize(1);
         assertThat(sink.completed()).isTrue();
         verify(persistService, never())
-                .persistTurn(any(), any(), any(), any(), anyLong(), eq(false));
+                .persistTurn(any(), any(), any(), any(), anyLong(), eq(false), any());
     }
 
     /* ------------------------------------------------------------ 成功路径 */
@@ -137,7 +137,7 @@ class ChatServiceImplTest {
     @Test
     @DisplayName("落库成功：done.messageId 是数据库 id，不是上游的 py-m-*")
     void doneCarriesDatabaseMessageId() {
-        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(false)))
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(false), any()))
                 .thenReturn(4321L);
         when(ai.chatStream(eq(OWNER), any(), any())).thenReturn(AiServiceClient.StreamHandle.NOOP);
 
@@ -154,7 +154,7 @@ class ChatServiceImplTest {
     @Test
     @DisplayName("重复终态只落库一次：先 done 再 onError 不会写出两条助手消息")
     void duplicateTerminalEventsPersistOnce() {
-        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean()))
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), any()))
                 .thenReturn(7L);
         when(ai.chatStream(eq(OWNER), any(), any())).thenReturn(AiServiceClient.StreamHandle.NOOP);
 
@@ -162,7 +162,8 @@ class ChatServiceImplTest {
         listener().onEvent(done("py-m-1"));
         listener().onError(new IllegalStateException("收尾异常"));
 
-        verify(persistService).persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean());
+        verify(persistService)
+                .persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), any());
         assertThat(sink.done()).isNotNull();
     }
 
@@ -170,7 +171,7 @@ class ChatServiceImplTest {
     @DisplayName("上游不可达：走降级 done{degraded:true}，不抛给前端")
     void unavailableUpstreamDegrades() {
         when(ai.chatStream(eq(OWNER), any(), any())).thenThrow(new IllegalStateException("连接被拒绝"));
-        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(true)))
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(true), any()))
                 .thenReturn(11L);
 
         AiServiceClient.StreamHandle handle = service.stream(context(), sink);
@@ -192,6 +193,88 @@ class ChatServiceImplTest {
         returned.cancel();
 
         assertThat(cancelled).isTrue();
+    }
+
+    /* ------------------------------------------------------------ 追问推荐（N2） */
+
+    @Test
+    @DisplayName("N2：上游给的追问既进 done 帧，也原样交给落库（刷新后 chips 不丢）")
+    void suggestionsArePersistedAndEmitted() {
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), any()))
+                .thenReturn(99L);
+        when(ai.chatStream(eq(OWNER), any(), any())).thenReturn(AiServiceClient.StreamHandle.NOOP);
+
+        service.stream(context(), sink);
+        listener()
+                .onEvent(
+                        AiStreamEvent.done(
+                                "py-m-1",
+                                Map.of("promptTokens", 12),
+                                40L,
+                                false,
+                                List.of("续借几天？", "最多几本？"),
+                                null,
+                                null));
+
+        assertThat(sink.done().suggestions()).containsExactly("续借几天？", "最多几本？");
+        // 关键：落库那次调用拿到的必须是同一份列表。只在 done 帧里带、不落库，
+        // 就是 N2 要修的那个缺陷（刷新页面 chips 全丢）。
+        ArgumentCaptor<List<String>> saved = ArgumentCaptor.forClass(List.class);
+        verify(persistService)
+                .persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), saved.capture());
+        assertThat(saved.getValue()).containsExactly("续借几天？", "最多几本？");
+    }
+
+    @Test
+    @DisplayName("N2：追问条数按 max-suggestions 截断，落库与 done 帧用同一份截断结果")
+    void suggestionsAreTruncatedOnce() {
+        XiaoyiProperties properties = new XiaoyiProperties();
+        properties.getChat().setMaxSuggestions(2);
+        ChatServiceImpl limited =
+                new ChatServiceImpl(
+                        ai,
+                        conversations,
+                        messages,
+                        new MessageJsonCodec(new ObjectMapper()),
+                        new CitationMapper(),
+                        persistService,
+                        properties,
+                        Runnable::run);
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), any()))
+                .thenReturn(77L);
+        when(ai.chatStream(eq(OWNER), any(), any())).thenReturn(AiServiceClient.StreamHandle.NOOP);
+
+        limited.stream(context(), sink);
+        listener()
+                .onEvent(
+                        AiStreamEvent.done(
+                                "py-m-1",
+                                Map.of("promptTokens", 12),
+                                40L,
+                                false,
+                                List.of("一？", "二？", "三？"),
+                                null,
+                                null));
+
+        assertThat(sink.done().suggestions()).containsExactly("一？", "二？");
+        ArgumentCaptor<List<String>> saved = ArgumentCaptor.forClass(List.class);
+        verify(persistService)
+                .persistTurn(any(), any(), any(), any(), anyLong(), anyBoolean(), saved.capture());
+        // 两处各自截断会埋「气泡上三条、刷新后两条」的雷，这里钉死只截一次。
+        assertThat(saved.getValue()).containsExactly("一？", "二？");
+    }
+
+    @Test
+    @DisplayName("N2：降级路径没有上游 done，追问必须是空列表而不是编造几条")
+    void degradedTurnHasNoSuggestions() {
+        when(ai.chatStream(eq(OWNER), any(), any())).thenThrow(new IllegalStateException("连接被拒绝"));
+        when(persistService.persistTurn(any(), any(), any(), any(), anyLong(), eq(true), any()))
+                .thenReturn(12L);
+
+        service.stream(context(), sink);
+
+        assertThat(sink.done().degraded()).isTrue();
+        assertThat(sink.done().suggestions()).isEmpty();
     }
 
     /* ------------------------------------------------------------ 身份 */

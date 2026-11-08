@@ -76,7 +76,8 @@ public class ChatPersistServiceImpl implements ChatPersistService {
             List<AiCitation> citations,
             Map<String, Integer> usage,
             long elapsedMs,
-            boolean degraded) {
+            boolean degraded,
+            List<String> suggestions) {
         long now = Instant.now().getEpochSecond();
 
         Message userMessage = new Message();
@@ -100,6 +101,12 @@ public class ChatPersistServiceImpl implements ChatPersistService {
         assistant.setCitationsJson(jsonCodec.write(citationVOs));
         assistant.setRetrievalTraceJson(jsonCodec.write(buildTrace(context, citationVOs)));
         assistant.setUsageJson(jsonCodec.write(usage));
+        // N2：追问推荐落库。空列表存 NULL 而不是 '[]' —— 历史行没有这一列，
+        // 让「没有推荐」和「N2 之前的老数据」在库里长得一样，读侧只需一条降级分支。
+        assistant.setSuggestionsJson(
+                suggestions == null || suggestions.isEmpty()
+                        ? null
+                        : jsonCodec.write(List.copyOf(suggestions)));
         assistant.setElapsedMs(elapsedMs);
         assistant.setDegraded(degraded);
         assistant.setCreatedAt(now);
