@@ -555,6 +555,29 @@ components:
           items:
             type: string
           description: '预留：资料访问控制标签，本期恒为空数组'
+        options:
+          type: object
+          description: |
+            实验通道专用：本轮的检索/生成覆盖项；普通问答不传（缺省即空对象）。
+            `InternalChatRequest` 是 `additionalProperties: false`，所以必须显式声明，
+            否则 Python 侧 Pydantic 会静默丢弃，参数实验的「重排 / 摘要」两根轴就变成装饰。
+          additionalProperties: true
+          properties:
+            rerank:
+              type: boolean
+              description: '是否启用精排；缺省沿用 RETRIEVAL_RERANK'
+            summary:
+              type: boolean
+              description: '是否启用全局摘要卡（N3 起生效；当前版本恒为 false）'
+            chunk_size:
+              type: integer
+              minimum: 50
+              maximum: 1000
+              description: '本轮建库片段长度；仅实验通道使用，问答链路忽略'
+            overlap:
+              type: integer
+              minimum: 0
+              description: '本轮建库重叠字数；仅实验通道使用，问答链路忽略'
 
     InternalCitation:
       type: object
@@ -573,9 +596,15 @@ components:
         chunk_id:
           type: string
           pattern: '^D\d{2}-C\d{3}$'
+          description: |
+            片段号。资料片段用 `D01`–`D99`（文档号来自资料编号，每用户最多 99 份）；
+            **全局摘要卡固定用文档号 `D00`**（`D00-C001`、`D00-C002`…），`doc_id` 填
+            `__summary__`、`doc_title` 填「全库摘要」，`kind` 为 `summary` 或 `rule`。
+            摘要卡不参与资料编号分配，`MAX_DOCS_PER_USER=99` 的语义不变。
         doc_id:
           type: string
           minLength: 1
+          description: '资料 id；全局摘要卡固定为 `__summary__`'
         doc_title:
           type: string
         heading_path:
@@ -804,6 +833,13 @@ components:
           type: string
           minLength: 1
           description: 'Java 生成的索引代际；任务成功时用它决定当前生效片段。'
+        gen_summary:
+          type: boolean
+          default: true
+          description: |
+            是否生成全局摘要卡（N3）。`false` 时跳过 summarizing 阶段的实际生成
+            （阶段仍上报，前端进度文案不变）。本 schema 是 `additionalProperties: false`，
+            所以必须显式声明，否则 Python 侧收不到这个开关。
 
     ParseAccepted:
       type: object

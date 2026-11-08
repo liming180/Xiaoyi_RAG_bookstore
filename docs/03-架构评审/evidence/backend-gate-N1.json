@@ -1,0 +1,109 @@
+{
+  "phase": "N1",
+  "name": "实验参数真生效（E3 修假）：四根轴里三根从装饰变成真执行",
+  "pass": true,
+  "timestamp": "2026-11-08T21:45:00+08:00",
+  "gates": [
+    {
+      "key": "java-verify",
+      "command": "cd server-java && mvn -o -q spotless:apply && mvn -o verify",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "testsPassed": 71,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "detail": "AuthServiceTest 11 / ChatServiceImplTest 8 / DocumentServiceImplTest 7 / EvalServiceOptionsTest 3 / ExperimentParamsTest 5 / ExperimentServiceTest 3 / FeedbackServiceTest 7 / IndexServiceImplTest 15 / TokenServiceTest 12",
+      "note": "N1 新增 ExperimentParamsTest 5 条（chunkSize 轴两次重建、参数相同零重建、effective 里 summary=false、单组重建失败仍继续、9 组 40001）与 EvalServiceOptionsTest 3 条（camelCase → snake_case options）。63 → 71。日志里 IndexServiceImplTest 打印的 stacktrace 与 ChatServiceImplTest 的『推送失败 / 推送任务被拒绝』是刻意构造的失败分支，不是错误。"
+    },
+    {
+      "key": "J0-contract",
+      "command": "cd test && python -X utf8 -m pytest J0-contract -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "79 passed in 0.98s",
+      "note": "对外接口从 28 条增到 29 条（新增 GET /api/v1/eval/candidates/export，text/csv）。契约里 ExperimentMetrics 显式声明 effective / scored / unscored / error —— 它是 additionalProperties: false，不声明就会被判违约。"
+    },
+    {
+      "key": "A3-hybrid",
+      "command": "cd test && python -X utf8 -m pytest A3-hybrid -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "29 passed, 1 warning in 11.31s",
+      "note": "新增 test_options_rerank.py 6 条：ChatRequest 收 options、rerank=false 引用全 rrf、rerank=true 全 rerank、不传沿用全局、两档 stage 不同、diagnostics 记 rerankRequested/rerankEffective。23 → 29。"
+    },
+    {
+      "key": "J5-eval",
+      "command": "python tools/p7_pytest.py J5-eval -q --no-header（mock 档，服务在 8080）",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "29 passed in 36.02s",
+      "provider": "mock",
+      "note": "新增 test_experiments_params.py 6 条：每组各重建一次 index_task、收尾恢复 180/30、实验进行中 /index/rebuild 回 40902、9 组回 40001、effective 里 summary=false、进度逐组递增。既有 23 条不退化。"
+    },
+    {
+      "key": "frontend-gate",
+      "command": "cd frontend && node scripts/gate.mjs N1",
+      "ok": true,
+      "exitCode": 0,
+      "gates": [
+        { "key": "lint", "label": "ESLint", "ok": true, "elapsedMs": 55417, "command": "npx eslint . --max-warnings 0" },
+        { "key": "typecheck", "label": "vue-tsc", "ok": true, "elapsedMs": 3133, "command": "npx vue-tsc --noEmit" },
+        {
+          "key": "test",
+          "label": "vitest",
+          "ok": true,
+          "elapsedMs": 76804,
+          "counts": { "filesPassed": 25, "filesFailed": 0, "testsPassed": 309, "testsFailed": 0 }
+        },
+        {
+          "key": "contract",
+          "label": "contract drift",
+          "ok": true,
+          "elapsedMs": 123,
+          "command": "node scripts/check-contract-drift.mjs",
+          "tail": "30 个接口与契约一致"
+        }
+      ],
+      "report": "frontend/test-artifacts/gate-N1.json",
+      "note": "Vitest 303 → 309（experiment.spec.ts 的 CSV 列数 11→13、生效参数列、未计分题数、effectiveAxes/ineffectiveAxes/AXIS_LABELS 四条）。contract drift 首轮曾报『ExperimentMetrics 漏了契约字段：effective, scored, unscored, error』，补 api.d.ts 后通过 —— 这道门禁确实在挡漂移。"
+    }
+  ],
+  "changes": {
+    "contract": [
+      "docs/api/openapi-internal.yaml：InternalChatRequest 加 options（additionalProperties: true，properties rerank/summary/chunk_size/overlap）；InternalParseRequest 加 gen_summary（default true）",
+      "docs/api/openapi-public.yaml：ExperimentMetrics 加 effective/scored/unscored/error；CreateExperimentRequest 加 questionIds；CandidateDecisionRequest 加 keywords；新增 GET /api/v1/eval/candidates/export"
+    ],
+    "python": [
+      "server-ai/app/schemas/models.py：ChatRequest.options、ParseRequest.gen_summary",
+      "server-ai/app/services/ingest.py：retrieve(..., rerank: bool | None = None) 覆盖 settings.retrieval_rerank，diagnostics 记 rerankRequested/rerankEffective，context_citations 透传",
+      "server-ai/app/services/chat.py：从 req.options.get('rerank') 取值传入"
+    ],
+    "java": [
+      "ExperimentServiceImpl：每组 alignIndex() 先重建再评测、失败组继续下一组、收尾 restoreDefaults()、MAX_GROUPS=8、metrics.effective",
+      "IndexService.rebuildForExperiment：跳过 40902 互斥（保留 40903），避免实验自己的重建被自己拦住",
+      "IndexServiceImpl.rebuild：实验 PENDING/RUNNING 期间直接 40902；注入 ExperimentRepository 而非 ExperimentService（避免循环依赖）",
+      "EvalServiceImpl.chatOptions：只把 rerank/summary/chunk_size/overlap 四个 snake_case 键放进 options",
+      "MockAiClient：options.rerank=false 时引用档位退化 rerank → rrf"
+    ],
+    "frontend": [
+      "src/types/api.d.ts + api.generated.ts 同步新字段",
+      "src/api/modules/eval.ts：exportCandidates()、decideCandidate 带 keywords、createExperiment 支持 questionIds",
+      "src/features/eval/composables/experiment.ts：AXIS_LABELS / effectiveAxes / ineffectiveAxes，CSV 13 列",
+      "src/features/eval/components/ExperimentMatrix.vue：本组生效参数列（未生效灰显删除线 + tooltip）、未计分提示行"
+    ]
+  },
+  "notRun": [],
+  "notes": [
+    "J3-sse 本轮未复跑：N1 没有触碰 SSE 事件序列、ChatServiceImpl.emitDone 或会话落库，J3 的观测点不在改动面上；上一轮 backend-gate-all.json 里 J3 仍是 32 passed。",
+    "根门禁（J0/J1/J2/J4/J6/J7/A1/A2/A3 真实 provider 档）本轮只复跑了受改动影响的 J0 与 A3；J1/J2/J4/J6/J7/A1/A2 的契约与代码路径未变，最后一条任务（N6 收口）会做全量归档。",
+    "mock 档 J5 用 AI_MOCK=true 的实例；真实档 A3 走 mock provider 的进程内 TestClient（test/A3-hybrid 的既有约定），不需要真实 Milvus。"
+  ],
+  "knownLimitations": [
+    "summary 轴在 metrics.effective 里恒为 false —— 建库管线的 summarizing 阶段还只更新进度、不生成摘要卡。N3（全局摘要卡）落地后才允许翻成 true，翻之前不许为了让报告好看改常量。",
+    "chunkSize/overlap 轴的重建在 mock 档走 MockAiClient 的 4 次轮询（约 4 秒/组），不是真实 embedding；真实 embedding + Milvus 单次约 6 秒，8 组实验可能跑一分钟以上，awaitTask 的 120 秒上限按真实耗时留的余量。",
+    "J5 的 chunkSize 轴证据取自 index_task 表而不是 /index/status：后者只报最近一次成功任务，三组参数跑完只剩恢复后的 180/30，中间两组的参数在黑盒上不可见。"
+  ]
+}

@@ -55,6 +55,8 @@ EXPECTED_OPERATIONS: set[tuple[str, str]] = {
     ("/api/v1/feedback/summary", "get"),
     ("/api/v1/eval/candidates", "get"),
     ("/api/v1/eval/candidates/{id}/decision", "post"),
+    # N4：反馈闭环的最后一公里 —— 已采纳候选导成题库 CSV（text/csv，不套信封）。
+    ("/api/v1/eval/candidates/export", "get"),
     ("/api/v1/eval/experiments", "post"),
     ("/api/v1/eval/experiments/{id}", "get"),
     ("/api/v1/eval/experiments/{id}/report", "get"),
@@ -165,7 +167,7 @@ def test_public_operation_ids_unique_and_non_empty() -> None:
     assert all(ids), f"存在缺失 operationId 的 operation：{ids}"
     duplicates = sorted({i for i in ids if ids.count(i) > 1})
     assert not duplicates, f"operationId 重复：{duplicates}"
-    assert len(ids) == len(set(ids)) == 28, f"operationId 应有 28 个，实际 {len(ids)}"
+    assert len(ids) == len(set(ids)) == 29, f"operationId 应有 29 个，实际 {len(ids)}"
 
 
 # --------------------------------------------------------------------------- 2. 28 条一条不少
@@ -177,7 +179,7 @@ def test_public_operations_match_checklist() -> None:
     extra = sorted(got - EXPECTED_OPERATIONS)
     assert not missing, f"缺少 operation：{missing}"
     assert not extra, f"多出 operation：{extra}"
-    assert len(got) == 28
+    assert len(got) == 29
 
 
 def test_public_operations_cover_spec_subset() -> None:
@@ -203,7 +205,11 @@ def test_public_every_operation_has_envelope_responses() -> None:
             continue
 
         content200 = (deref(doc, responses["200"]) or {}).get("content") or {}
-        if "text/event-stream" not in content200:
+        # 两种非 JSON 信封的 200：SSE 流与文件下载。
+        #   - text/event-stream：/chat/stream 推帧，没有 Result 包装；
+        #   - text/csv：/eval/candidates/export 直接给文件，浏览器要的是原始字节，
+        #     套一层 {code,message,data} 会让下载到的 CSV 多出一段 JSON 头。
+        if "text/event-stream" not in content200 and "text/csv" not in content200:
             schema200 = (content200.get("application/json") or {}).get("schema") or {}
             ref200 = schema200.get("$ref", "")
             if not (

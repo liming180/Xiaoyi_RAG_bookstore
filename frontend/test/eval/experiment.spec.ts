@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { ExperimentAxis, ExperimentRun } from '@/types/api';
 import {
+  AXIS_LABELS,
   countGroups,
   defaultAxes,
+  effectiveAxes,
   experimentCsvRows,
   experimentPercent,
   expandAxes,
   formatElapsed,
   formatRate,
+  ineffectiveAxes,
   isBestRun,
   paramsLabel,
   pickBestRun,
@@ -196,20 +199,86 @@ describe('CSV 导出', () => {
     const runs = [run('g1', { hitRate: 0.7 }), run('g2', { hitRate: 0.95 }, { k: 5 })];
     const rows = experimentCsvRows(runs, pickBestRun(runs));
     expect(rows[0]?.slice(0, 3)).toEqual(['参数组', '片段长度', '重叠']);
-    expect(rows[0]).toHaveLength(11);
-    expect(rows[1]?.[10]).toBe('');
-    expect(rows[2]?.[10]).toBe('是');
+    // 13 列：N1 加了「本组生效参数」，N4 加了「未计分题数」。
+    expect(rows[0]).toHaveLength(13);
+    expect(rows[0]?.[10]).toBe('本组生效参数');
+    expect(rows[0]?.[11]).toBe('未计分题数');
+    expect(rows[1]?.[12]).toBe('');
+    expect(rows[2]?.[12]).toBe('是');
     expect(rows[2]?.[3]).toBe('5');
     expect(rows[2]?.[6]).toBe('95.0%');
   });
 
+  it('生效参数列照抄后端 metrics.effective，未标注时不假装生效', () => {
+    const flagged = run('g1', {
+      effective: { k: true, rerank: true, chunkSize: true, overlap: true, summary: false },
+    });
+    const legacy = run('g2');
+    const rows = experimentCsvRows([flagged, legacy], null);
+    // summary 未生效，不该出现在这一列里。
+    expect(rows[1]?.[10]).toBe('k/重排/片段长度/重叠');
+    expect(rows[1]?.[10]).not.toContain('摘要');
+    // 老报告没有 effective 字段：明说未标注，不要假装全生效。
+    expect(rows[2]?.[10]).toBe('（未标注）');
+  });
+
+  it('未计分题数原样带出（候选题没填关键词）', () => {
+    const rows = experimentCsvRows([run('g1', { unscored: 2 })], null);
+    expect(rows[1]?.[11]).toBe('2');
+  });
+
   it('没有最优行时所有行都不标「是」', () => {
     const rows = experimentCsvRows([run('g1')], null);
-    expect(rows[1]?.[10]).toBe('');
+    expect(rows[1]?.[12]).toBe('');
   });
 
   it('csvTimestamp 形如 20261030-2315', () => {
     const stamp = csvTimestamp(new Date(2026, 9, 30, 23, 15));
     expect(stamp).toBe('20261030-2315');
+  });
+});
+
+describe('本组生效参数（N1 的验收核心）', () => {
+  it('effective 全 true 时五根轴都算生效', () => {
+    const metrics = {
+      hitRate: 0.9,
+      avgElapsedMs: 1000,
+      avgSources: 3,
+      failed: 0,
+      effective: { k: true, rerank: true, chunkSize: true, overlap: true, summary: true },
+    };
+    expect(effectiveAxes(metrics)).toEqual(['k', 'rerank', 'chunkSize', 'overlap', 'summary']);
+    expect(ineffectiveAxes(metrics)).toEqual([]);
+  });
+
+  it('summary=false 时归入未生效，且带中文名', () => {
+    const metrics = {
+      hitRate: 0.9,
+      avgElapsedMs: 1000,
+      avgSources: 3,
+      failed: 0,
+      effective: { k: true, rerank: true, chunkSize: true, overlap: true, summary: false },
+    };
+    expect(effectiveAxes(metrics)).not.toContain('summary');
+    expect(ineffectiveAxes(metrics)).toEqual(['summary']);
+    expect(AXIS_LABELS.summary).toBe('摘要');
+  });
+
+  it('后端没给 effective 时两个函数都返回空数组（不假装生效）', () => {
+    const metrics = { hitRate: 0.9, avgElapsedMs: 1000, avgSources: 3, failed: 0 };
+    expect(effectiveAxes(metrics)).toEqual([]);
+    expect(ineffectiveAxes(metrics)).toEqual([]);
+  });
+
+  it('部分轴缺失时只认显式 true', () => {
+    const metrics = {
+      hitRate: 0.9,
+      avgElapsedMs: 1000,
+      avgSources: 3,
+      failed: 0,
+      effective: { k: true },
+    };
+    expect(effectiveAxes(metrics)).toEqual(['k']);
+    expect(ineffectiveAxes(metrics)).toEqual([]);
   });
 });

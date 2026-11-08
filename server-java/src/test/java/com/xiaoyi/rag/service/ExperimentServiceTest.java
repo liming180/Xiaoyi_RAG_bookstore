@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaoyi.rag.common.exception.ApiException;
+import com.xiaoyi.rag.config.XiaoyiProperties;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.entity.Experiment;
 import com.xiaoyi.rag.repository.ExperimentRepository;
@@ -25,12 +26,18 @@ class ExperimentServiceTest {
     private final ExperimentRepository experiments = mock(ExperimentRepository.class);
     private final ExperimentRunRepository runs = mock(ExperimentRunRepository.class);
     private final EvalService eval = mock(EvalService.class);
+    private final IndexService indexes = mock(IndexService.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final ExperimentServiceImpl service;
 
     ExperimentServiceTest() {
         when(manager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
-        service = new ExperimentServiceImpl(experiments, runs, eval, new ObjectMapper(), manager);
+        XiaoyiProperties properties = new XiaoyiProperties();
+        properties.getIndex().setDefaultChunkSize(180);
+        properties.getIndex().setDefaultOverlap(30);
+        service =
+                new ExperimentServiceImpl(
+                        experiments, runs, eval, indexes, properties, new ObjectMapper(), manager);
     }
 
     @Test

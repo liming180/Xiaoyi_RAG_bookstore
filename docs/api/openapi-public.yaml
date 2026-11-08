@@ -793,6 +793,29 @@ paths:
           $ref: '#/components/responses/InternalError'
       x-error-codes: [40001, 40100, 40404, 50000]
 
+  /api/v1/eval/candidates/export:
+    get:
+      operationId: exportEvalCandidates
+      tags: [评测]
+      summary: 导出已采纳候选为题库 CSV
+      description: |
+        导出当前用户 `status=accepted` 的候选，按 `createdAt` 倒序。
+        两列：`question,keywords`（带 BOM，Excel 直接可读）。
+        人工补完 keywords 后贴回 `assets/eval/questions.csv` 即可进题库；
+        没补关键词的候选题进实验会标 `scored:false`，不计入 hitRate 分母。
+      responses:
+        '200':
+          description: CSV 文件
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-error-codes: [40100, 50000]
+
   /api/v1/eval/experiments:
     post:
       operationId: createExperiment
@@ -2121,6 +2144,13 @@ components:
         status:
           type: string
           enum: [accepted, ignored]
+        keywords:
+          type: string
+          maxLength: 512
+          description: |
+            人工补的判分关键词，语法同 `assets/eval/keywords.csv`（组内 `/` 表示同义、
+            组间 `|` 表示必须全部命中）。只有 `status=accepted` 时才会写入。
+            留空 = 该候选题可以进实验但标 `scored:false`，不计入 hitRate 分母。
 
     # ------------------------------------------------------------ 实验
 
@@ -2197,6 +2227,36 @@ components:
         failed:
           type: integer
           minimum: 0
+        effective:
+          type: object
+          description: |
+            **本组哪几根轴真的生效**。前端对比表按这一栏灰显未生效的轴，
+            tooltip 写「该参数在当前版本不生效」。
+            `summary` 在全局摘要卡（A5/N3）落地前恒为 `false`：参数能填、能落库，
+            但建库管线不生成摘要卡，两组跑出来完全一样，不许假装生效。
+          additionalProperties: false
+          properties:
+            k:
+              type: boolean
+            rerank:
+              type: boolean
+            chunkSize:
+              type: boolean
+            overlap:
+              type: boolean
+            summary:
+              type: boolean
+        scored:
+          type: integer
+          minimum: 0
+          description: '计入 hitRate 分母的题数（有判分关键词的题）'
+        unscored:
+          type: integer
+          minimum: 0
+          description: '进了实验但没计分的题数（候选题未填关键词）'
+        error:
+          type: string
+          description: '本组失败原因；仅该组失败时出现，不影响其它组'
 
     ExperimentRun:
       type: object
@@ -2266,5 +2326,14 @@ components:
         name:
           type: string
           description: '缺省「参数实验」'
+        questionIds:
+          type: array
+          description: |
+            选题。留空/缺省 = 全部 13 道题库题。
+            `T01`–`T13` 走内置题库；`C<候选id>` 走候选池（必须是当前用户且 status=accepted）。
+            不存在的题号回 40001。
+          items:
+            type: string
+            minLength: 1
         axes:
           $ref: '#/components/schemas/ExperimentAxis'

@@ -27,6 +27,7 @@ import com.xiaoyi.rag.model.entity.IndexTask;
 import com.xiaoyi.rag.model.vo.IndexTaskVO;
 import com.xiaoyi.rag.repository.ChunkRepository;
 import com.xiaoyi.rag.repository.DocumentRepository;
+import com.xiaoyi.rag.repository.ExperimentRepository;
 import com.xiaoyi.rag.repository.IndexTaskRepository;
 import com.xiaoyi.rag.service.impl.IndexServiceImpl;
 import java.io.ByteArrayInputStream;
@@ -65,6 +66,8 @@ class IndexServiceImplTest {
 
     @Mock private Storage storage;
 
+    @Mock private ExperimentRepository experiments;
+
     private IndexServiceImpl service;
 
     @BeforeEach
@@ -75,7 +78,14 @@ class IndexServiceImplTest {
         properties.getIndex().setEmbeddingModel("mock-embedding");
         service =
                 new IndexServiceImpl(
-                        tasks, documents, chunks, ai, storage, properties, new ObjectMapper());
+                        tasks,
+                        documents,
+                        chunks,
+                        ai,
+                        storage,
+                        properties,
+                        new ObjectMapper(),
+                        experiments);
     }
 
     /* ------------------------------------------------------------ 受理 */

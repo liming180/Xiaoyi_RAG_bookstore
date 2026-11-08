@@ -16,6 +16,7 @@ import com.xiaoyi.rag.config.XiaoyiProperties;
 import com.xiaoyi.rag.model.dto.RebuildRequest;
 import com.xiaoyi.rag.model.entity.Chunk;
 import com.xiaoyi.rag.model.entity.Document;
+import com.xiaoyi.rag.model.entity.Experiment;
 import com.xiaoyi.rag.model.entity.IndexTask;
 import com.xiaoyi.rag.model.vo.ChunkItemVO;
 import com.xiaoyi.rag.model.vo.IndexManifestVO;
@@ -23,6 +24,7 @@ import com.xiaoyi.rag.model.vo.IndexStatusVO;
 import com.xiaoyi.rag.model.vo.IndexTaskVO;
 import com.xiaoyi.rag.repository.ChunkRepository;
 import com.xiaoyi.rag.repository.DocumentRepository;
+import com.xiaoyi.rag.repository.ExperimentRepository;
 import com.xiaoyi.rag.repository.IndexTaskRepository;
 import com.xiaoyi.rag.service.IndexService;
 import com.xiaoyi.rag.service.Storage;
@@ -87,6 +89,11 @@ public class IndexServiceImpl implements IndexService {
     private static final List<String> STALE_DOC_STATUS =
             List.of("UPLOADING", "PARSING", "FAILED", "NEEDS_REBUILD");
 
+    /** 实验的非终态取值，与 {@code ExperimentServiceImpl} 落库时用的一致。 */
+    private static final String EXPERIMENT_STATUS_PENDING = "PENDING";
+
+    private static final String EXPERIMENT_STATUS_RUNNING = "RUNNING";
+
     private static final int MIN_CHUNK_SIZE = 50;
 
     private static final int MAX_CHUNK_SIZE = 1000;
@@ -109,6 +116,15 @@ public class IndexServiceImpl implements IndexService {
 
     private final ObjectMapper objectMapper;
 
+    /**
+     * 参数实验仓库：只用来判「现在有没有实验在跑」。
+     *
+     * <p>刻意注入 {@code ExperimentRepository} 而不是 {@code ExperimentService}： 实验侧也要调 {@link
+     * #rebuild}（chunkSize/overlap 轴必须真重建索引）， 两个 Service 互相注入会形成循环依赖，Spring 只能靠 {@code @Lazy} 打补丁。
+     * 这里只需要一次状态查询，走仓库是最短路径。
+     */
+    private final ExperimentRepository experimentRepository;
+
     public IndexServiceImpl(
             IndexTaskRepository indexTaskRepository,
             DocumentRepository documentRepository,
@@ -116,7 +132,8 @@ public class IndexServiceImpl implements IndexService {
             AiServiceClient aiClient,
             Storage storage,
             XiaoyiProperties properties,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            ExperimentRepository experimentRepository) {
         this.indexTaskRepository = indexTaskRepository;
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
@@ -124,6 +141,7 @@ public class IndexServiceImpl implements IndexService {
         this.storage = storage;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.experimentRepository = experimentRepository;
     }
 
     /* ------------------------------------------------------------ 状态 */
@@ -244,6 +262,40 @@ public class IndexServiceImpl implements IndexService {
     @Override
     @Transactional
     public IndexTaskVO rebuild(Long userId, RebuildRequest request) {
+        // 实验进行中拒绝建库：参数实验每一组都要先按本组 chunkSize/overlap 重建索引，
+        // 若允许用户此刻手动重建，会把正在测量的向量库换掉，实验结论就不可信。
+        // 与 40903 分开：一个是「已有建库任务」，一个是「已有实验在执行」，前端文案不同。
+        List<Experiment> activeExperiments =
+                experimentRepository.findByStatusIn(
+                        List.of(EXPERIMENT_STATUS_PENDING, EXPERIMENT_STATUS_RUNNING));
+        if (!activeExperiments.isEmpty()) {
+            throw new ApiException(
+                    ErrorCode.EXPERIMENT_ALREADY_RUNNING.getCode(),
+                    ErrorCode.EXPERIMENT_ALREADY_RUNNING.getDefaultMessage());
+        }
+        return accept(userId, request);
+    }
+
+    /**
+     * 实验通道：同一套受理逻辑，只跳过「已有实验在执行」的互斥。
+     *
+     * <p>实验自己就是那个「正在执行的实验」，走 {@link #rebuild} 会被自己挡住（40902）。 建库任务本身的串行锁（40903）仍然生效 ——
+     * 一组实验的重建没跑完就开下一组，属于编排 bug。
+     */
+    @Override
+    @Transactional
+    public IndexTaskVO rebuildForExperiment(Long userId, RebuildRequest request) {
+        return accept(userId, request);
+    }
+
+    /**
+     * 受理一次重建：参数校验 → 并发锁 → 落库任务 → 触发 Python。
+     *
+     * @param userId 归属用户
+     * @param request 片段长度与重叠字数
+     * @return 新建任务视图
+     */
+    private IndexTaskVO accept(Long userId, RebuildRequest request) {
         int chunkSize =
                 request == null || request.chunkSize() == null
                         ? properties.getIndex().getDefaultChunkSize()

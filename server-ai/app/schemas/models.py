@@ -10,6 +10,10 @@ class ChatRequest(BaseModel):
     mode: Literal["rag", "direct", "both"] = "rag"
     k: int = Field(3, ge=1, le=10)
     acl: list[str] = []
+    # 实验通道专用覆盖项：rerank / summary / chunk_size / overlap。
+    # 内部契约 InternalChatRequest 是 additionalProperties: false，YAML 里已显式声明 options；
+    # 这里必须跟着收，否则 Pydantic 会静默丢弃，参数实验的「重排」轴就成了装饰。
+    options: dict[str, Any] = {}
 class ParseDocument(BaseModel):
     doc_id: str = Field(min_length=1)
     name: str = ""
@@ -23,6 +27,8 @@ class ParseRequest(BaseModel):
     overlap: int = Field(30, ge=0)
     submission_key: str = Field(min_length=1)
     generation: str = Field(min_length=1)
+    # N3：是否生成全局摘要卡。false 时跳过 summarizing 阶段的实际生成（阶段仍上报）。
+    gen_summary: bool = True
 class RetrieveRequest(BaseModel):
     question: str | None = None
     k: int = Field(3, ge=1, le=10)

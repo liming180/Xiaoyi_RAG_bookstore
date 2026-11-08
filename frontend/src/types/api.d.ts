@@ -389,6 +389,28 @@ export interface ExperimentMetrics {
   avgElapsedMs: number;
   avgSources: number;
   failed: number;
+  /**
+   * 本组哪几根轴真的生效。
+   *
+   * `summary` 在全局摘要卡落地前恒为 `false`：参数能填、能落库，但建库管线不生成
+   * 摘要卡，两组跑出来完全一样。对比表按这一栏灰显未生效的轴。
+   */
+  effective?: ExperimentEffective;
+  /** 计入 hitRate 分母的题数（有判分关键词的题） */
+  scored?: number;
+  /** 进了实验但没计分的题数（候选题未填关键词） */
+  unscored?: number;
+  /** 本组失败原因；仅该组失败时出现，不影响其它组 */
+  error?: string;
+}
+
+/** 每根轴在本组是否真生效。 */
+export interface ExperimentEffective {
+  k?: boolean;
+  rerank?: boolean;
+  chunkSize?: boolean;
+  overlap?: boolean;
+  summary?: boolean;
 }
 
 export interface ExperimentRun {

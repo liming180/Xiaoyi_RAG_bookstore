@@ -292,8 +292,15 @@ def retrieve(
     *,
     history: list[dict[str, str]] | None = None,
     mode: str | None = None,
+    rerank: bool | None = None,
 ) -> pipeline.RecallResult:
-    """四档检索：dense / bm25 / rrf / hybrid（RRF + 精排）。"""
+    """四档检索：dense / bm25 / rrf / hybrid（RRF + 精排）。
+
+    `rerank` 是本轮覆盖项（参数实验的「重排」轴）：`None` 表示沿用全局配置
+    `settings.retrieval_rerank`，`False` 表示跳过精排、直接用融合顺序（此时
+    citations 的 `score_stage` 是 `rrf` 而不是 `rerank`）。没有这个覆盖口，
+    E3 实验里 rerank=true/false 两组跑出来的引用完全一样，那根轴就是装饰。
+    """
     task_id = _latest_task(user_id)
     if task_id is None:
         return pipeline.RecallResult(citations=[], rows=[], elapsed_ms=0)
@@ -332,11 +339,15 @@ def retrieve(
         return pipeline.RecallResult(citations=citations, rows=traces, elapsed_ms=0)
 
     selected_mode = mode or settings.retrieval_mode
+    # 本轮真正生效的重排开关：显式覆盖优先，否则沿用全局配置。
+    rerank_effective = settings.retrieval_rerank if rerank is None else bool(rerank)
     diagnostics: dict[str, Any] = {
         "mode": selected_mode,
         "originalQuestion": question,
         "rewrittenQuestion": rewritten,
         "rewriteDegraded": runtime.rewriter().degraded,
+        "rerankRequested": rerank,
+        "rerankEffective": rerank_effective,
         "dense": [{"chunkId": row["chunk_id"], "score": row["score"]} for row in dense],
         "sparse": [],
         "rrf": [],
@@ -359,7 +370,8 @@ def retrieve(
         (dense, sparse), k=settings.retrieval_rrf_k, limit=settings.retrieval_candidate_limit,
     )
     diagnostics["rrf"] = [{"chunkId": row["chunk_id"], "score": row["score"]} for row in fused]
-    if selected_mode == "rrf" or not settings.retrieval_rerank:
+    if selected_mode == "rrf" or not rerank_effective:
+        # rerank=false 的实验组走这条：分数阶段是 rrf，不是 rerank。
         result = pipeline.recall(runtime.store(), request, stage="rrf", candidates=fused)
         result.diagnostics = diagnostics
         return result
@@ -392,10 +404,20 @@ def retrieve_data(
 
 
 def context_citations(
-    user_id: int, question: str, k: int, history: list[dict[str, str]] | None = None,
+    user_id: int,
+    question: str,
+    k: int,
+    history: list[dict[str, str]] | None = None,
+    rerank: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """对话链路取上下文引用；供 `chat.sse_events` 复用同一套检索。"""
-    result = retrieve(user_id, RetrieveRequest(question=question, k=k), history=history)
+    """对话链路取上下文引用；供 `chat.sse_events` 复用同一套检索。
+
+    `rerank` 由 `ChatRequest.options["rerank"]` 透传：参数实验的 rerank=false 组
+    要求引用里不出现 `score_stage=rerank`，所以这个开关必须一路传到检索层。
+    """
+    result = retrieve(
+        user_id, RetrieveRequest(question=question, k=k), history=history, rerank=rerank,
+    )
     return result.citations
 
 

@@ -1,4 +1,9 @@
-import type { ExperimentAxis, ExperimentMetrics, ExperimentParams, ExperimentRun } from '@/types/api';
+import type {
+  ExperimentAxis,
+  ExperimentMetrics,
+  ExperimentParams,
+  ExperimentRun,
+} from '@/types/api';
 import { CHUNK_SIZE_DEFAULT, OVERLAP_DEFAULT, K_DEFAULT } from '@/constants/app';
 
 /**
@@ -77,6 +82,38 @@ export function paramsLabel(params: ExperimentParams): string {
   return `${params.chunkSize}/${params.overlap} · k=${params.k} · ${flags.join(' · ')}`;
 }
 
+/** 轴的中文名，用于「本组生效参数」列与 tooltip。 */
+export const AXIS_LABELS: Record<string, string> = {
+  k: 'k',
+  rerank: '重排',
+  chunkSize: '片段长度',
+  overlap: '重叠',
+  summary: '摘要',
+};
+
+/**
+ * 本组真正生效的轴（按后端 `metrics.effective` 如实返回）。
+ *
+ * 后端没给这一栏时（老报告）保守返回空数组：宁可什么都不显示，也不要假装全生效。
+ */
+export function effectiveAxes(metrics: ExperimentMetrics): string[] {
+  const flags = metrics.effective;
+  if (!flags) return [];
+  return Object.keys(AXIS_LABELS).filter((key) => flags[key as keyof typeof flags] === true);
+}
+
+/**
+ * 本组没生效的轴。
+ *
+ * `summary` 在全局摘要卡落地前恒为 false —— 参数能填、能落库，但建库管线不生成摘要卡。
+ * 对比表按这一栏灰显并给出 tooltip，不让用户以为「摘要关了」和「摘要开了」真有区别。
+ */
+export function ineffectiveAxes(metrics: ExperimentMetrics): string[] {
+  const flags = metrics.effective;
+  if (!flags) return [];
+  return Object.keys(AXIS_LABELS).filter((key) => flags[key as keyof typeof flags] === false);
+}
+
 /** 命中率百分比文案，保留一位小数（0.9166… → 91.7%） */
 export function formatRate(rate: number): string {
   return `${(Math.max(0, Math.min(1, rate)) * 100).toFixed(1)}%`;
@@ -101,7 +138,21 @@ export function experimentPercent(progress: number): number {
  * 让导出的表格脱离页面也能看出结论。
  */
 export function experimentCsvRows(runs: ExperimentRun[], best: ExperimentRun | null): string[][] {
-  const header = ['参数组', '片段长度', '重叠', 'k', '重排', '摘要', '命中率', '平均耗时(ms)', '平均来源数', '失败数', '最优'];
+  const header = [
+    '参数组',
+    '片段长度',
+    '重叠',
+    'k',
+    '重排',
+    '摘要',
+    '命中率',
+    '平均耗时(ms)',
+    '平均来源数',
+    '失败数',
+    '本组生效参数',
+    '未计分题数',
+    '最优',
+  ];
   const rows = runs.map((run) => {
     const m: ExperimentMetrics = run.metrics;
     return [
@@ -115,6 +166,11 @@ export function experimentCsvRows(runs: ExperimentRun[], best: ExperimentRun | n
       String(Math.round(m.avgElapsedMs)),
       String(m.avgSources),
       String(m.failed),
+      // 生效参数列照抄后端 metrics.effective：报告里也要看得出哪几根轴是装饰。
+      effectiveAxes(m)
+        .map((key) => AXIS_LABELS[key] ?? key)
+        .join('/') || '（未标注）',
+      String(m.unscored ?? 0),
       isBestRun(run, best) ? '是' : '',
     ];
   });

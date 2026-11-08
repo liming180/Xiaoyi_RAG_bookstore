@@ -37,6 +37,20 @@ public interface IndexService {
     IndexTaskVO rebuild(Long userId, RebuildRequest request);
 
     /**
+     * 实验通道重建：与 {@link #rebuild} 完全同一套编排，**只跳过「已有实验在执行」那道互斥**。
+     *
+     * <p>为什么必须有这个入口：参数实验的 chunkSize / overlap 两根轴要真生效，就必须在每组开始前 按本组参数重建一次向量库；而 {@link #rebuild}
+     * 在检测到「有实验正在跑」时回 40902（防止用户 手动重建把正在测量的向量库换掉）。实验自己调重建会撞上自己的锁，所以单独开一条通道。
+     *
+     * <p>调用方只有 {@code ExperimentServiceImpl}，不要在 Controller 里暴露：它绕过了并发保护。
+     *
+     * @param userId 归属用户
+     * @param request 本组的片段长度与重叠字数
+     * @return 新建的建库任务（status=PENDING）
+     */
+    IndexTaskVO rebuildForExperiment(Long userId, RebuildRequest request);
+
+    /**
      * 查单个任务，供前端 1s 轮询。
      *
      * @param userId 当前用户

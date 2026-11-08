@@ -11,7 +11,7 @@ import type {
   FeedbackRequest,
   FeedbackSummary,
 } from '@/types/api';
-import { get, post } from '../http';
+import { get, http, post } from '../http';
 
 /* ---------------------------------------------------------------- 题目 */
 
@@ -123,17 +123,43 @@ export async function listCandidates(): Promise<EvalCandidate[]> {
 export async function decideCandidate(
   id: string,
   status: 'accepted' | 'ignored',
+  keywords?: string,
 ): Promise<void> {
-  await post<void>(`/eval/candidates/${encodeURIComponent(id)}/decision`, { status });
+  const body: { status: string; keywords?: string } = { status };
+  // 只有 accepted 才带关键词：ignored 的候选不会进实验，写了也没人读。
+  if (status === 'accepted' && keywords !== undefined && keywords.trim() !== '') {
+    body.keywords = keywords.trim();
+  }
+  await post<void>(`/eval/candidates/${encodeURIComponent(id)}/decision`, body);
+}
+
+/**
+ * 导出已采纳候选为题库 CSV（`question,keywords` 两列，带 BOM）。
+ *
+ * 必须走 `responseType: 'blob'`：这条端点返回 `text/csv`，默认 JSON 解析会先炸掉。
+ * 响应拦截器对 Blob 不做 Result 拆包（`'code' in blob` 为 false），原样返回，正好。
+ */
+export async function exportCandidates(): Promise<Blob> {
+  const response = await http.get<Blob>('/eval/candidates/export', { responseType: 'blob' });
+  return response.data;
 }
 
 /* ------------------------------------------------------------ 参数实验 */
 
 export async function createExperiment(payload: {
   name: string;
+  /** 选题：空 = 全 13 道题库题；`T01`–`T13` 走题库，`C<候选id>` 走候选池 */
+  questionIds?: string[];
   axes: ExperimentAxis;
 }): Promise<Experiment> {
-  return post<Experiment>('/eval/experiments', payload);
+  const body: { name: string; axes: ExperimentAxis; questionIds?: string[] } = {
+    name: payload.name,
+    axes: payload.axes,
+  };
+  if (payload.questionIds && payload.questionIds.length > 0) {
+    body.questionIds = payload.questionIds;
+  }
+  return post<Experiment>('/eval/experiments', body);
 }
 
 export async function fetchExperiment(id: string): Promise<Experiment> {

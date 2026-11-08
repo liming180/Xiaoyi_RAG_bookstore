@@ -31,10 +31,14 @@ async def sse_events(user_id: int, req: ChatRequest, provider: LlmProvider) -> A
 
     # direct 模式不检索：A2 的提示词明确要求 direct 走空引用，避免把 RAG 的答案
     # 伪装成「没检索也能答对」。
+    # options.rerank 是参数实验的重排轴覆盖项：None 表示沿用全局配置。
+    rerank_option = req.options.get("rerank") if isinstance(req.options, dict) else None
+    rerank = rerank_option if isinstance(rerank_option, bool) else None
     citations = (
         [] if req.mode == "direct" else ingest.context_citations(
             user_id, req.question, req.k,
             [turn.model_dump() for turn in req.history],
+            rerank=rerank,
         )
     )
     if req.mode != "direct":

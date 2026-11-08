@@ -5,10 +5,13 @@ import { CHUNK_SIZE_DEFAULT, K_DEFAULT, OVERLAP_DEFAULT } from '@/constants/app'
 import { downloadCsv, csvTimestamp, toCsv } from '@/utils/csv';
 import { ElMessage } from 'element-plus';
 import {
+  AXIS_LABELS,
+  effectiveAxes,
   experimentCsvRows,
   experimentPercent,
   formatElapsed,
   formatRate,
+  ineffectiveAxes,
   isBestRun,
   paramsLabel,
 } from '../composables/experiment';
@@ -64,6 +67,14 @@ const totalGroups = computed(() => props.experiment?.totalGroups ?? props.groupC
 const finishedGroups = computed(() => props.experiment?.finishedGroups ?? 0);
 
 const sortedRuns = computed(() => [...props.runs]);
+
+/**
+ * 未计分题总数：候选题没填判分关键词时，后端会在 `metrics.unscored` 计数。
+ * 大于 0 时对比表下方要给一行说明，否则用户会以为命中率掉了。
+ */
+const unscoredTotal = computed(() =>
+  props.runs.reduce((sum, run) => sum + (run.metrics.unscored ?? 0), 0),
+);
 
 function exportCsv(): void {
   if (props.runs.length === 0) {
@@ -224,6 +235,7 @@ const bestLabel = computed(() => (props.best ? paramsLabel(props.best.params) : 
             <th class="exp__col-num">平均耗时</th>
             <th class="exp__col-num">来源数</th>
             <th class="exp__col-num">失败</th>
+            <th>本组生效参数</th>
           </tr>
         </thead>
         <tbody>
@@ -245,9 +257,32 @@ const bestLabel = computed(() => (props.best ? paramsLabel(props.best.params) : 
             <td class="exp__col-num">{{ formatElapsed(run.metrics.avgElapsedMs) }}</td>
             <td class="exp__col-num">{{ run.metrics.avgSources }}</td>
             <td class="exp__col-num">{{ run.metrics.failed }}</td>
+            <td class="exp__col-effective" :data-testid="`exp-effective-${run.id}`">
+              <span
+                v-for="key in effectiveAxes(run.metrics)"
+                :key="key"
+                class="exp__axis exp__axis--on"
+              >
+                {{ AXIS_LABELS[key] ?? key }}
+              </span>
+              <span
+                v-for="key in ineffectiveAxes(run.metrics)"
+                :key="`off-${key}`"
+                class="exp__axis exp__axis--off"
+                :title="`${AXIS_LABELS[key] ?? key}：该参数在当前版本不生效`"
+              >
+                {{ AXIS_LABELS[key] ?? key }}
+              </span>
+              <span v-if="run.metrics.error" class="exp__axis-error" :title="run.metrics.error">
+                本组失败
+              </span>
+            </td>
           </tr>
         </tbody>
       </table>
+      <p v-if="unscoredTotal > 0" class="exp__unscored" data-testid="exp-unscored">
+        本组有 {{ unscoredTotal }} 道候选题未计分（未填判分关键词，不进 hitRate 分母）
+      </p>
     </div>
 
     <div v-else-if="!experiment" class="exp__empty" data-testid="exp-empty">
@@ -475,6 +510,45 @@ const bestLabel = computed(() => (props.best ? paramsLabel(props.best.params) : 
 .exp__params {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.exp__col-effective {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.exp__axis {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.exp__axis--on {
+  color: var(--teal-dark);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+}
+
+.exp__axis--off {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  text-decoration: line-through;
+  cursor: help;
+}
+
+.exp__axis-error {
+  color: var(--red);
+  font-size: 11px;
+  cursor: help;
+}
+
+.exp__unscored {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .exp__empty {

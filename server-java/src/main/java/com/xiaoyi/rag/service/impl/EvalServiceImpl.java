@@ -181,7 +181,7 @@ public class EvalServiceImpl implements EvalService {
         List<String> sources = new ArrayList<>();
         ai.chatStream(
                 userId,
-                new AiChatRequest(question, List.of(), mode, k, List.of(), options),
+                new AiChatRequest(question, List.of(), mode, k, List.of(), chatOptions(options)),
                 new AiServiceClient.StreamListener() {
                     @Override
                     public synchronized void onEvent(AiStreamEvent event) {
@@ -219,6 +219,42 @@ public class EvalServiceImpl implements EvalService {
     }
 
     private record Answer(String text, List<String> sources) {}
+
+    /**
+     * 把实验参数翻译成内部契约 {@code InternalChatRequest.options}。
+     *
+     * <p>为什么必须显式挑字段：{@code options} 是内部契约里唯一允许的自由对象，但 Python 侧 只认 `rerank` / `summary` /
+     * `chunk_size` / `overlap` 四个键。把整份实验参数原样塞过去 （`chunkSize`、`k` 这些 camelCase 键）不会报错，只会被静默忽略 ——
+     * 于是「参数实验」 又变回装饰。这里只放 Python 真读的键，且用 snake_case。
+     *
+     * <p>`chunk_size` / `overlap` 对本轮问答没有影响（片段是建库时切好的），传过去只是为了 让 Python 侧诊断日志能对上「这轮是在什么参数下跑的」。
+     *
+     * @param options 实验组参数；普通评测传空 Map
+     * @return 内部契约的 options；没有可传项时返回空 Map
+     */
+    private static Map<String, Object> chatOptions(Map<String, Object> options) {
+        if (options == null || options.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        Object rerank = options.get("rerank");
+        if (rerank instanceof Boolean flag) {
+            result.put("rerank", flag);
+        }
+        Object summary = options.get("summary");
+        if (summary instanceof Boolean flag) {
+            result.put("summary", flag);
+        }
+        Object chunkSize = options.get("chunkSize");
+        if (chunkSize instanceof Number number) {
+            result.put("chunk_size", number.intValue());
+        }
+        Object overlap = options.get("overlap");
+        if (overlap instanceof Number number) {
+            result.put("overlap", number.intValue());
+        }
+        return result;
+    }
 
     public static boolean judge(String answer, String keywords) {
         if (keywords == null || keywords.isEmpty()) return false;

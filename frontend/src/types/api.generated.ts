@@ -474,6 +474,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/eval/candidates/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导出已采纳候选为题库 CSV
+         * @description 导出当前用户 `status=accepted` 的候选，按 `createdAt` 倒序。
+         *     两列：`question,keywords`（带 BOM，Excel 直接可读）。
+         *     人工补完 keywords 后贴回 `assets/eval/questions.csv` 即可进题库；
+         *     没补关键词的候选题进实验会标 `scored:false`，不计入 hitRate 分母。
+         */
+        get: operations["exportEvalCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/eval/experiments": {
         parameters: {
             query?: never;
@@ -1008,6 +1031,12 @@ export interface components {
         CandidateDecisionRequest: {
             /** @enum {string} */
             status: "accepted" | "ignored";
+            /**
+             * @description 人工补的判分关键词，语法同 `assets/eval/keywords.csv`（组内 `/` 表示同义、
+             *     组间 `|` 表示必须全部命中）。只有 `status=accepted` 时才会写入。
+             *     留空 = 该候选题可以进实验但标 `scored:false`，不计入 hitRate 分母。
+             */
+            keywords?: string;
         };
         ExperimentAxis: {
             chunkSize: number[];
@@ -1031,6 +1060,25 @@ export interface components {
             /** @description 平均引用条数 */
             avgSources: number;
             failed: number;
+            /**
+             * @description **本组哪几根轴真的生效**。前端对比表按这一栏灰显未生效的轴，
+             *     tooltip 写「该参数在当前版本不生效」。
+             *     `summary` 在全局摘要卡（A5/N3）落地前恒为 `false`：参数能填、能落库，
+             *     但建库管线不生成摘要卡，两组跑出来完全一样，不许假装生效。
+             */
+            effective?: {
+                k?: boolean;
+                rerank?: boolean;
+                chunkSize?: boolean;
+                overlap?: boolean;
+                summary?: boolean;
+            };
+            /** @description 计入 hitRate 分母的题数（有判分关键词的题） */
+            scored?: number;
+            /** @description 进了实验但没计分的题数（候选题未填关键词） */
+            unscored?: number;
+            /** @description 本组失败原因；仅该组失败时出现，不影响其它组 */
+            error?: string;
         };
         ExperimentRun: {
             id: components["schemas"]["EntityId"];
@@ -1059,6 +1107,12 @@ export interface components {
         CreateExperimentRequest: {
             /** @description 缺省「参数实验」 */
             name: string;
+            /**
+             * @description 选题。留空/缺省 = 全部 13 道题库题。
+             *     `T01`–`T13` 走内置题库；`C<候选id>` 走候选池（必须是当前用户且 status=accepted）。
+             *     不存在的题号回 40001。
+             */
+            questionIds?: string[];
             axes: components["schemas"]["ExperimentAxis"];
         };
     };
@@ -1810,6 +1864,28 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportEvalCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV 文件 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["InternalError"];
         };
     };

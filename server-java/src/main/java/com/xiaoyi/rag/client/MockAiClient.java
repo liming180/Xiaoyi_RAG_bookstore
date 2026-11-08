@@ -167,7 +167,7 @@ public class MockAiClient implements AiServiceClient {
         String mode = request == null || request.mode() == null ? "rag" : request.mode();
         int topK = request == null || request.k() == null ? 3 : request.k();
         String messageId = "m-" + sequence.incrementAndGet();
-        List<AiCitation> citations = pickCitations(topK);
+        List<AiCitation> citations = pickCitations(topK, rerankEffective(request));
 
         // 参数实验不模拟人的逐字阅读延迟，仍完整异步发出所有协议事件。
         long stepDelay =
@@ -376,9 +376,10 @@ public class MockAiClient implements AiServiceClient {
      * 按 k 截断引用池，并按 1..n 重编 ref，模拟真实 RAG 的 top-k 编号。
      *
      * @param topK 召回条数
+     * @param rerankEffective 本轮重排是否生效
      * @return 引用列表，至少一条
      */
-    private List<AiCitation> pickCitations(int topK) {
+    private List<AiCitation> pickCitations(int topK, boolean rerankEffective) {
         int limit = Math.max(1, Math.min(topK, CITATION_POOL.size()));
         List<AiCitation> picked = new ArrayList<>(limit);
         for (int i = 0; i < limit; i++) {
@@ -394,11 +395,38 @@ public class MockAiClient implements AiServiceClient {
                             source.start(),
                             source.end(),
                             source.score(),
-                            source.scoreStage(),
+                            // 重排关掉时引用档位退回融合顺序（rrf），与 Python 侧
+                            // ingest.retrieve(rerank=False) 的行为一致 —— 否则 mock 档
+                            // 的「rerank 轴真生效」用例会永远通过，等于没验。
+                            rerankEffective ? source.scoreStage() : rrfStage(source.scoreStage()),
                             source.kind(),
                             source.verified()));
         }
         return picked;
+    }
+
+    /**
+     * 把引用档位降级到融合阶段：`rerank` → `rrf`，其余原样。
+     *
+     * @param stage 原档位
+     * @return 关掉重排后的档位
+     */
+    private static String rrfStage(String stage) {
+        return "rerank".equals(stage) ? "rrf" : stage;
+    }
+
+    /**
+     * 本轮重排是否生效：读 `options.rerank`，缺省 true（与全局 RETRIEVAL_RERANK 默认值一致）。
+     *
+     * @param request 内部契约请求
+     * @return 生效则 true
+     */
+    private static boolean rerankEffective(AiChatRequest request) {
+        if (request == null || request.options() == null) {
+            return true;
+        }
+        Object value = request.options().get("rerank");
+        return !(value instanceof Boolean flag) || flag;
     }
 
     /**
