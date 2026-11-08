@@ -12,6 +12,7 @@
 | `compose_smoke.py` | 容器栈冒烟：走 nginx（默认 `http://127.0.0.1:8088`）验首页 / 双账号登录 / 列表隔离 / 建库 / chunks 隔离 / 库核对。`--db-via-container` 改走 `compose exec mysql`（`stack` 模式用）。报告落 `test-artifacts/compose-smoke.json`。 |
 | `check_stack_db.py` | 查 `deploy/docker-compose.yml` 里 mysql 容器的表数 / Flyway 历史 / 文档与片段归属，用来核对「空库起栈后 Flyway 是否真建了 13 张表」。 |
 | `local_mysql_grant_container.py` | 建 `xiaoyi@'%'` 账号并只授 `xiaoyi_rag_local_gate.*`。容器连宿主机库前跑一次。 |
+| `pull_milvus.ps1` | 拉 Milvus 四件套（etcd / minio / milvus / attu），每个镜像按多个镜像站依次重试，`-SkipExisting` 跳过已有。**必须纯 ASCII**：Windows PowerShell 5.1 用 ANSI 代码页读 `.ps1`，中文注释会让脚本解析失败。 |
 | `arch_snapshot.py` | 生成 `docs/03-架构评审/snapshot/架构快照.md`（文件数、行数、类数）。 |
 
 ## 环境装配（被上面几个 import，不单独跑）
@@ -40,6 +41,7 @@
 | `fix_internal_openapi.py` | 修正 `docs/api/openapi-internal.yaml` 里 `InternalParseRequest` 的字段缩进。 |
 | `p7_diag_tasks.py` | 打印门禁库最近的 `index_task` / `document` 行，排查建库卡住。 |
 | `p7_java_probe.py` | 起 java 后捕获退出码与日志尾部。 |
+| `write_a2_report.py` | 把 A2 的实测数字写成 `test-artifacts/backend-gate-A2.json`（6 个门禁 + 修复清单 + 未采纳项）。 |
 
 ## 约定
 

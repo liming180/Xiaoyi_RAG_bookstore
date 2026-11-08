@@ -232,8 +232,47 @@ python tools\docker_deploy.py build --push --registry registry.example.com/team 
 - **Windows 系统代理**：`httpx` 会读 `HKCU\...\Internet Settings` 的 `ProxyServer=127.0.0.1:7890`（`ProxyOverride` 里的 `127.*` 对 httpx 不生效），未设 `NO_PROXY=127.0.0.1,localhost` 时 pytest 打 `127.0.0.1:8080` 会拿到 502。
 - **容器内构建靠 `maven` 基础镜像，网络波动就会整段失败**：`server-java/Dockerfile:7` 的 `RUN mvn -q -DskipTests package` 首次曾报 `DependencyResolutionException`，隔一会儿重试即成功（同一份 Dockerfile、同一台机器）。依赖层一旦进了 BuildKit 缓存，后续 `--build` 只重跑变更层。日常用 `--mode prebuilt` 绕开这一步。
 
-### 路线 B：我要答辩，得能解释代码
+#### 路线 A 之三：接上真 RAG（Milvus + 智谱 embedding，2026-11-07 实测通过）
 
+上面两条路线跑的是 `AI_PROVIDER=mock`，检索走内存向量库。要验真实链路（切分 → 智谱 `embedding-3` 2048 维 → Milvus → top-k 引用），先把 Milvus 起来，再把 provider 指过去。
+
+```powershell
+# 1) 拉镜像（Docker Hub 直连不稳时用镜像站；脚本纯 ASCII，可重复跑）
+powershell -ExecutionPolicy Bypass -File tools\pull_milvus.ps1 -SkipExisting
+
+# 2) 起 Milvus（etcd + minio + milvus + attu，网络 xiaoyi-net）
+docker compose -f deploy/milvus/docker-compose.yml up -d
+Invoke-WebRequest http://127.0.0.1:9091/healthz        # 期望 200 OK
+
+# 3) 填 provider（deploy/local-mysql.env，已被 .gitignore 忽略）
+#    AI_PROVIDER=real
+#    EMBEDDING_ENDPOINT=https://open.bigmodel.cn/api/paas/v4   # 程序自己拼 /embeddings
+#    EMBEDDING_MODEL=embedding-3
+#    EMBEDDING_API_KEY=<你的 key>
+#    LLM_ENDPOINT=https://open.bigmodel.cn/api/paas/v4
+#    LLM_MODEL=glm-4-flash
+#    LLM_API_KEY=<同一个 key>
+#    MILVUS_URI=http://milvus:19530
+#    MILVUS_COLLECTION=xiaoyi_chunks
+
+# 4) 重建 python-ai（要装 pymilvus）并起栈
+python tools\docker_deploy.py up --smoke
+
+# 5) 验真实检索：上传 → 建库 → 提问，回答里必须带 [1] 这类引用
+```
+
+要点：
+
+- **`deploy/milvus/user.yaml` 里是真实 API key**，已被 `.gitignore:60` 忽略；模板是 `user.yaml.example`，只放占位串。
+- **`user.yaml` 只在用 Milvus 内置 Function 时才需要**：本项目默认在 Python 侧调 embedding（`server-ai/app/core/rag/embedder.py`），把 `user.yaml` 摘掉也不影响 A2 的检索链路。启用 Function 有两个实测坑：`textEmbedding.providers.openai.url` 必须写到 `/v4/embeddings`（Milvus 不自动补后缀，写 `/v4` 会 404），Function 的 `params` 里模型名的键是 `model_name` 而不是 `model`（写错智谱回 `1214 model:model cannot be empty`）。两者都写进 `user.yaml.example` 的注释了。
+- **minio 需要 `user: "0"`**：`dockerproxy.net/bitnamilegacy/minio` 默认 uid=1001，写卷报 `file access denied, drive may be faulty`，容器恒 unhealthy。
+- **Milvus 写后不 flush 就必须用 Strong 一致性读**：`flush()` 实测 8–11 秒，建库路径上会撞穿 J4 的 15s 轮询阈值；改成写侧不 flush + 读侧 `consistency_level="Strong"`（0.05s 就能看到），单份资料建库从 19s 降到 6.1s。代价是换 Milvus 版本要重验这条假设。
+- **`/index/status` 的 `embeddingModel` 以 Python manifest 为准**：Java 的 `INDEX_EMBEDDING_MODEL` 只是登记值，真正做向量化的是 Python。两者不一致时顶层字段与 manifest 会自相矛盾（曾出现 `mock-embedding` vs `embedding-3`）。
+- **分块仍是 180/30**：`IndexServiceImpl.status()` 在 `manifest.chunkSize` 与任务值不一致时强制 `needs_rebuild`，J4 也有五处断言钉死 180，所以没按 §14.1 改 500/75。
+
+A2 的完整验收数字见 [06_后端施工单.md](03-架构评审/06_后端施工单.md) §10 与 `test-artifacts/backend-gate-A2.json`。
+
+### 路线 B：我要答辩，得能解释代码
 ```
 02-重构设计/RAG文档.md §4-§5      → 先有全局：离线管线怎么建、在线 7 步怎么答
         ↓
@@ -279,14 +318,17 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | --- | --- |
 | 前端文件 | **83 个** ts/vue/css（`frontend/src`）+ 25 个 spec |
 | API 契约 | v2 **28 条对外 + 8 条内部**（`02-重构设计/00_项目架构规格.md` §7.3/§7.4）；v1 的 24 条见归档 B05 |
-| 建库（180/30） | **15 片段**（01=2 02=2 03=2 04=3 05=3 06=3）——v1 实测值，v2 默认改 500/75 后需重测 |
+| 建库（180/30） | **15 片段**（01=2 02=2 03=2 04=3 05=3 06=3）——v1 实测值；v2 实测 6 篇语料 = 16 片段（含标题继承后的边界差异） |
 | 前端测试 | **303/303 通过**（25 个 spec） |
 | 前端门禁 | **10 份阶段报告全 pass**（P1→P6，含 build） |
 | 批量对照 | 查资料 **10/10** · 不查资料 **1/10**（v1 mock 数据） |
 | 浏览器实测 | 冒烟 7 项 + CDP 回归 10 场景全 PASS，**21 张截图** |
 | 构建产物 | `vendor-ui 798 kB (gzip 252)` + `vendor 189 (68)` + `vendor-vue 114 (44)` + 各页面 chunk |
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
-| 后端 v2 | **J0 契约 + J1 骨架 + J2 CRUD + J3 SSE + J4 建库已完成**：`docs/api/` 四份契约、`server-java/`（Spring Boot 3.2.10 / Java 21，9 张表 Flyway 迁移（V2 加 `chunk` 缓存表）、28 条路由回统一信封、会话/消息/资料 12 条接口真落库、`POST /chat/stream` SSE 五类事件流式问答 + `GET /messages/{id}/trace` 检索轨迹、`POST /index/rebuild` 串行建库 + `@Scheduled` 轮询五阶段推进 + `GET /chunks` 片段浏览）、根 `test/`（pytest 十阶段，J0 79 / J1 61 / J2 30 / J3 32 / J4 30 全绿）。`server-ai/` 尚未创建 |
+| 后端 v2（Java） | **H1–H4 + P0–P8 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、122 个类 / 12099 行、13 张表 Flyway V1–V7、28 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **63 passed** |
+| 后端 v2（Python） | **A1 + A2 已完成**：`server-ai/` 22 个文件 / 2178 行，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、防幻觉提示、流式 provider。`test/A2-rag` **17 passed** |
+| 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`test-artifacts/backend-gate-A2.json`） |
+| 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2` **274 passed / 1 skipped**；mock 档 `J3 J5` **55 passed** |
 
 ## 六、目录与文件对照（代码在哪）
 
