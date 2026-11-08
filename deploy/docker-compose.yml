@@ -1,4 +1,4 @@
-﻿# 交付形态：三端 + MySQL 全部在容器里。
+# 交付形态：三端 + MySQL 全部在容器里。
 #
 # 这是「一套 compose 起全栈」的形态，需要能拉到 mysql:8.0 / python:3.12-slim /
 # maven / node / nginx 五个基础镜像。网络受限时的两条等价路径：
@@ -54,6 +54,16 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # A3 混合检索：默认 hybrid（双路 + RRF + 重排降级）。
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      RETRIEVAL_CANDIDATE_LIMIT: ${RETRIEVAL_CANDIDATE_LIMIT:-20}
+      RETRIEVAL_RRF_K: ${RETRIEVAL_RRF_K:-60}
+      RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-true}
+      RETRIEVAL_REWRITE: ${RETRIEVAL_REWRITE:-true}
+      RERANK_ENDPOINT: ${RERANK_ENDPOINT:-}
+      RERANK_MODEL: ${RERANK_MODEL:-rerank}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
       # 本文件是自包含的交付形态：Milvus 不在本栈里，走宿主机已发布的 19530。
       # 想接 compose 内网络（xiaoyi-net）的 milvus 容器时，把这里改成
       # http://milvus:19530 并给本服务加 external 网络。

@@ -14,6 +14,9 @@
 | `local_mysql_grant_container.py` | 建 `xiaoyi@'%'` 账号并只授 `xiaoyi_rag_local_gate.*`。容器连宿主机库前跑一次。 |
 | `pull_milvus.ps1` | 拉 Milvus 四件套（etcd / minio / milvus / attu），每个镜像按多个镜像站依次重试，`-SkipExisting` 跳过已有。**必须纯 ASCII**：Windows PowerShell 5.1 用 ANSI 代码页读 `.ps1`，中文注释会让脚本解析失败。 |
 | `arch_snapshot.py` | 生成 `docs/03-架构评审/snapshot/架构快照.md`（文件数、行数、类数）。 |
+| `a3_compare.py` | **四档检索对照**（dense / bm25 / rrf / hybrid）。进程内 app + 真实或 mock provider，输出 hit@k / top-1 / MRR / 耗时与逐题 top-3，`--json` 落盘。看真实效果要先把 `AI_PROVIDER=real` 与 `EMBEDDING_*` 放进环境；接 `RERANK_ENDPOINT` 才走真重排。 |
+| `write_a3_report.py` | 跑 A3 套件 + 回归 + `mvn verify`，汇总两份对照 JSON，生成 `test-artifacts/backend-gate-A3.json`。`--skip-suites` 只汇总已有产物。 |
+| `a3_stack_probe.py` | **容器栈 A3 端到端探针**：打 8080 上的真实部署（登录 → 上传 → 建库 → SSE → 轨迹），验 `RETRIEVAL_MODE=hybrid` 下阶段序列含 `rewriting`/`reranking`、引用 `stage=rerank`、跨用户 0 条。与 `a3_compare.py` 互补：一个验指标，一个验部署形态。 |
 
 ## 环境装配（被上面几个 import，不单独跑）
 

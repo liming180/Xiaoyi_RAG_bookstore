@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import importlib
 import re
+import time
 
 import pytest
 
@@ -271,3 +273,116 @@ def test_rag_mode_emits_retrieval_with_own_citations(client):
     payload = json.loads(frame[0][6:])
     assert payload["citations"], "rag 模式下必须带本人语料的引用"
     assert all(item["doc_id"] for item in payload["citations"])
+
+
+# ---------------------------------------------------------------- 容量与主键
+#
+# 这两条是容器栈实测踩出来的：`local-a` 累计上传到 122 份资料后建库直接失败，
+# 报 `MilvusException: duplicate primary keys are not allowed in the same batch`。
+# 根因是 chunk_id 的文档号只有两位，第 100 份起被 clamp 成 D99，同批主键撞车。
+
+
+def test_document_number_over_limit_fails_with_actionable_message(module):
+    """99 个编号用满时必须报「上限」而不是悄悄截断成 D99。"""
+    ingest = importlib.import_module("app.services.ingest")
+    state = importlib.import_module("app.services.state")
+
+    for index in range(99):
+        state.upsert_document(USER_A, f"doc-{index}", f"资料 {index}", "INDEXED", 1)
+
+    with pytest.raises(ValueError) as excinfo:
+        state.upsert_document(USER_A, "doc-overflow", "第 100 份", "PARSING", 0)
+    message = str(excinfo.value)
+    assert "上限" in message and "99" in message, message
+    assert "删除" in message, "报错要给出可执行动作"
+
+    # 编号必须是 1..99 且不重复，不能像旧实现那样把超出的都压成 99。
+    numbers = [
+        state.document_number(USER_A, f"doc-{index}")
+        for index in range(99)
+        if state.document_number(USER_A, f"doc-{index}")
+    ]
+    assert sorted(numbers) == list(range(1, 100))
+    assert ingest.MAX_DOCS_PER_USER == 99
+
+
+def test_deleting_documents_frees_doc_numbers_for_new_uploads(module):
+    """删掉资料后编号必须能回收，否则「累计上传过 99 份」等于永久报废。
+
+    两条都要验：删掉的号被清掉；新资料能拿到腾出来的空号（分配取最小空闲号，
+    不需要重排存活资料的编号 —— 重排会在并发任务之间改动对方正在用的编号）。
+    """
+    state = importlib.import_module("app.services.state")
+
+    for index in range(99):
+        state.upsert_document(USER_A, f"doc-{index}", f"资料 {index}", "INDEXED", 1)
+
+    # Java 侧删掉了 10 份：建库请求里不再带它们，对账时回收编号。
+    # before 取「全部登记完之后」，把这一批都算作旧资料（updated_at 是秒级精度）。
+    remaining = [f"doc-{index}" for index in range(10, 99)]
+    released = state.reconcile_documents(USER_A, remaining, before=int(time.time()) + 60)
+    assert released == 10, released
+
+    reused = state.upsert_document(USER_A, "doc-new", "新资料", "PARSING", 0)
+    assert reused in range(1, 11), f"应当复用被腾出的空号，实际拿到 {reused}"
+
+    # 再补到 99 份仍然成功，第 100 份才报上限 —— 边界必须是「同时 99」而不是「累计 99」。
+    # 此时已有 89（留存）+ 1（doc-new）= 90 份，再补 9 份正好到 99。
+    for index in range(9):
+        state.upsert_document(USER_A, f"doc-fill-{index}", "补位", "INDEXED", 1)
+    with pytest.raises(ValueError, match="上限"):
+        state.upsert_document(USER_A, "doc-over", "越界", "PARSING", 0)
+
+
+def test_reconcile_keeps_documents_registered_by_a_concurrent_task(module):
+    """并发建库时，后一个任务刚登记的资料不能被前一个任务的对账删掉。
+
+    实测踩过：任务 A 推进到 splitting 时按自己的资料集对账，把任务 B 刚登记的
+    资料删了，B 随后报「资料 495 尚未登记编号」。对账只能删「早于本任务开始」的行。
+    """
+    state = importlib.import_module("app.services.state")
+
+    # updated_at 是秒级精度，先写旧资料，再跨过一个秒边界取「任务开始时刻」，
+    # 才能稳定区分「任务开始前就存在的」与「任务开始后才登记的」。
+    state.upsert_document(USER_A, "doc-old", "旧资料", "INDEXED", 1)
+    time.sleep(1.1)
+    task_a_started = int(time.time())
+    state.upsert_document(USER_A, "doc-live", "并发任务刚登记", "PARSING", 0)
+
+    # 任务 A 的资料集只有 doc-a，但 doc-live 是任务 A 开始之后才登记的，必须留下。
+    released = state.reconcile_documents(USER_A, ["doc-a"], before=task_a_started)
+    assert released == 1, f"只应回收 doc-old，实际 {released}"
+    assert state.document_number(USER_A, "doc-live") > 0, "并发任务的资料被误删"
+    assert state.document_number(USER_A, "doc-old") == 0
+
+
+def test_duplicate_chunk_id_in_one_batch_is_reported_by_doc(module, monkeypatch):
+    """同批重复 chunk_id 要在写入前点名，而不是留给 Milvus 报 code=1100。"""
+    ingest = importlib.import_module("app.services.ingest")
+
+    class FakeEmbedder:
+        degraded = False
+
+        def embed(self, texts):
+            return [[0.1, 0.2] for _ in texts]
+
+    class FakeStore:
+        def delete_task(self, user_id, task_id):
+            raise AssertionError("检测到重复主键时不该先删旧数据")
+
+        def upsert(self, user_id, task_id, rows):
+            raise AssertionError("检测到重复主键时不该调用 upsert")
+
+    monkeypatch.setattr(ingest.runtime, "embedder", lambda: FakeEmbedder())
+    monkeypatch.setattr(ingest.runtime, "store", lambda: FakeStore())
+    monkeypatch.setattr(ingest.runtime, "ensure_dim", lambda dim: None)
+
+    rows = [
+        {"chunk_id": "D99-C001", "doc_id": "doc-a", "excerpt": "甲"},
+        {"chunk_id": "D99-C001", "doc_id": "doc-b", "excerpt": "乙"},
+    ]
+    with pytest.raises(ValueError) as excinfo:
+        ingest._embed_and_store(USER_A, "task-dup", rows)
+    message = str(excinfo.value)
+    assert "重复 chunk_id" in message, message
+    assert "doc-a" in message and "doc-b" in message, "报错要点名是哪两份资料撞的"

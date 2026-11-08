@@ -1,4 +1,4 @@
-﻿# 用 Docker 起整套服务，数据库用「本机已装的 MySQL 8.0.39」，不起 mysql 容器。
+# 用 Docker 起整套服务，数据库用「本机已装的 MySQL 8.0.39」，不起 mysql 容器。
 #
 # 这是「容器内构建」形态：java 用 maven 基础镜像编译，frontend 用 node 基础镜像
 # npm ci + vite build。需要能拉到 maven / node / nginx / python 四个基础镜像。
@@ -43,6 +43,16 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # A3 混合检索：默认 hybrid（双路 + RRF + 重排降级）。
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      RETRIEVAL_CANDIDATE_LIMIT: ${RETRIEVAL_CANDIDATE_LIMIT:-20}
+      RETRIEVAL_RRF_K: ${RETRIEVAL_RRF_K:-60}
+      RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-true}
+      RETRIEVAL_REWRITE: ${RETRIEVAL_REWRITE:-true}
+      RERANK_ENDPOINT: ${RERANK_ENDPOINT:-}
+      RERANK_MODEL: ${RERANK_MODEL:-rerank}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
       # Milvus 在 deploy/milvus/docker-compose.yml 里，共用 xiaoyi-net 网络。
       MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
       MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}

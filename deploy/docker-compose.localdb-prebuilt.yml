@@ -61,6 +61,16 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # A3 混合检索：默认 hybrid（双路 + RRF + 重排降级）。
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      RETRIEVAL_CANDIDATE_LIMIT: ${RETRIEVAL_CANDIDATE_LIMIT:-20}
+      RETRIEVAL_RRF_K: ${RETRIEVAL_RRF_K:-60}
+      RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-true}
+      RETRIEVAL_REWRITE: ${RETRIEVAL_REWRITE:-true}
+      RERANK_ENDPOINT: ${RERANK_ENDPOINT:-}
+      RERANK_MODEL: ${RERANK_MODEL:-rerank}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
     volumes:
       - ai-state:/var/lib/xiaoyi-ai
     networks:

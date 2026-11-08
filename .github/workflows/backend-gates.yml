@@ -122,10 +122,28 @@ jobs:
           python test/scripts/serve_java.py --detach --db-name xiaoyi_rag_gate --profile gate-probe --log test-artifacts/ci-java-real.log
           echo "started java (real provider)"
 
-      - name: Real-provider gates (J0 J1 J2 J4 J6 A1 A2 J7)
+      - name: Real-provider gates (J0 J1 J2 J4 J6 A1 A2 A3 J7)
         # J4/J6 需要真实 provider 的 SSE 帧、stage 映射与五阶段节拍。
-        # A2 用进程内 TestClient + AI_PROVIDER=mock + MILVUS_URI="" 跑切分与引用契约，
-        # 不依赖外部 Milvus，所以放在这一步而不是单独起服务。
+        # A2/A3 用进程内 TestClient + AI_PROVIDER=mock + MILVUS_URI="" 跑切分、引用契约、
+        # RRF 手算、四档形状与降级路径，不依赖外部 Milvus 与重排服务，所以放在这一步
+        # 而不是单独起服务。注意：这些用例会继承 shell 环境，必须显式把 RETRIEVAL_*/
+        # RERANK_* 清空，否则带上真实 provider 配置时会假失败。
+        env:
+          AI_PROVIDER: ""
+          MILVUS_URI: ""
+          MILVUS_COLLECTION: ""
+          EMBEDDING_ENDPOINT: ""
+          EMBEDDING_MODEL: ""
+          EMBEDDING_API_KEY: ""
+          LLM_ENDPOINT: ""
+          LLM_MODEL: ""
+          LLM_API_KEY: ""
+          RETRIEVAL_MODE: ""
+          RETRIEVAL_RERANK: ""
+          RETRIEVAL_REWRITE: ""
+          RERANK_ENDPOINT: ""
+          RERANK_MODEL: ""
+          RERANK_API_KEY: ""
         run: |
           python -m pytest \
             test/J0-contract \
@@ -135,6 +153,7 @@ jobs:
             test/J6-integration \
             test/A1-ai-skeleton \
             test/A2-rag \
+            test/A3-hybrid \
             test/J7-isolation \
             -q
 
