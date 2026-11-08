@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -58,10 +57,6 @@ def selected() -> list[Path]:
             continue
         picked.append(path)
     return picked
-
-
-def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
 def payload(path: Path) -> Any:
