@@ -355,7 +355,7 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 后端 v2（Python） | **A1 + A2 + A3 已完成**：`server-ai/` 25 个文件，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider。`test/A2-rag` **21 passed**、`test/A3-hybrid` **23 passed** |
 | 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`docs/03-架构评审/evidence/backend-gate-A2.json`） |
 | 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`docs/03-架构评审/evidence/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
-| 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped / 181.92s**；mock 档 `J3 J5` **55 passed / 107.98s** |
+| 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped**，9 阶段合计 217.22s；mock 档 `J3 J5` **55 passed**，合计 82.45s。两轮由 `test/run_all.py` 合并成一份 `backend-gate-all.json`，覆盖 11/11 阶段（`partial=false`），每条 gate 带 `ranAt` 标明属于哪一轮 |
 
 ## 六、目录与文件对照（代码在哪）
 
