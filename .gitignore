@@ -54,3 +54,7 @@ server-java/storage/
 /storage/
 # pytest 跑 Python 侧时 STORAGE_ROOT 默认落到 test/storage/（含 ai-state.sqlite3）。
 test/storage/
+
+# ---- Milvus ----
+# deploy/milvus/user.yaml 含智谱 API key，只提交 user.yaml.example
+deploy/milvus/user.yaml

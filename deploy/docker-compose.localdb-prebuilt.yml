@@ -45,8 +45,27 @@ services:
       # splitting/embedding/summarizing 三个阶段在两次轮询之间就跑完了，
       # J4 的 test_task_stage_visits_all_five_values 会报「这些 stage 没被观察到」。
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # Milvus 在独立的栈里（deploy/milvus/docker-compose.yml，网络 xiaoyi-net），
+      # 所以本服务要同时挂到 xiaoyi-net 上才能用容器名 milvus 解析到它。
+      # 宿主机直跑 uvicorn 时改成 http://127.0.0.1:19530。
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 向量化与生成走真实服务（默认智谱 open.bigmodel.cn 的 OpenAI 兼容端点）。
+      # 设成 mock 时不打外网：向量用 sha256 派生的确定性假向量，回答用模板串。
+      AI_PROVIDER: ${AI_PROVIDER:-real}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
     volumes:
       - ai-state:/var/lib/xiaoyi-ai
+    networks:
+      - default
+      - xiaoyi-net
     expose:
       - "8000"
     healthcheck:
@@ -85,6 +104,8 @@ services:
       MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
     volumes:
       - ../server-java/storage:/app/storage
     extra_hosts:
@@ -120,3 +141,10 @@ services:
 
 volumes:
   ai-state:
+
+networks:
+  # Milvus 那份 compose 用 name: xiaoyi-net 固定了网络名，这里声明成 external，
+  # 避免 compose 再起一个同名但带项目前缀的网络。
+  xiaoyi-net:
+    external: true
+    name: xiaoyi-net

@@ -1,4 +1,4 @@
-# 交付形态：三端 + MySQL 全部在容器里。
+﻿# 交付形态：三端 + MySQL 全部在容器里。
 #
 # 这是「一套 compose 起全栈」的形态，需要能拉到 mysql:8.0 / python:3.12-slim /
 # maven / node / nginx 五个基础镜像。网络受限时的两条等价路径：
@@ -42,6 +42,25 @@ services:
       STORAGE_ROOT: /var/lib/xiaoyi-ai
       # 只被 server-ai/app/config.py 读取，Java 不读。
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+      # 向量化与生成走真实服务（默认智谱 OpenAI 兼容端点）；设 mock 则完全离线。
+      AI_PROVIDER: ${AI_PROVIDER:-real}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # 本文件是自包含的交付形态：Milvus 不在本栈里，走宿主机已发布的 19530。
+      # 想接 compose 内网络（xiaoyi-net）的 milvus 容器时，把这里改成
+      # http://milvus:19530 并给本服务加 external 网络。
+      MILVUS_URI: ${MILVUS_URI:-http://host.docker.internal:19530}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ai-state:/var/lib/xiaoyi-ai
     expose:
@@ -77,6 +96,8 @@ services:
       MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
     volumes:
       - ../server-java/storage:/app/storage
     depends_on:

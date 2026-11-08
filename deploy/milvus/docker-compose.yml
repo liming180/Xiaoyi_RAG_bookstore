@@ -1,0 +1,141 @@
+# Milvus standalone（etcd + minio + milvus + attu）——本机适配版
+#
+# 来源：D:\网站UI设计\资料\deploy\docker-compose.yml（用户提供），本仓库内做了四处本机适配：
+#   1) 容器名去掉 hm- 前缀，改 xi-（避免与本机其它项目的容器撞名）；
+#   2) 网络名由 heima-net 改 xiaoyi-net，且用 name: 固定，避免被 compose 项目前缀改写；
+#   3) 端口全部可覆盖（MILVUS_PORT / MINIO_API_PORT / MINIO_CONSOLE_PORT / ATTU_PORT），
+#      与本仓库已有的 8080/8088 不冲突；
+#   4) 镜像 tag 与本机能拉到的保持一致（见文件末尾「镜像获取」）。
+#
+# 与主栈的关系：这份文件是**独立**的，不挂在 deploy/docker-compose*.yml 下。
+# python-ai 用 MILVUS_URI=milvus:19530 连它，所以两边必须同网络：
+#   docker network connect xiaoyi-net deploy-python-ai-1
+# 或者起主栈时把这份文件也带上：
+#   docker compose -f deploy/milvus/docker-compose.yml -f deploy/docker-compose.localdb-prebuilt.yml up -d
+#
+# 启动：
+#   docker compose -f deploy/milvus/docker-compose.yml up -d
+# 查看：
+#   docker compose -f deploy/milvus/docker-compose.yml ps
+#   docker compose -f deploy/milvus/docker-compose.yml logs -f milvus
+# 停止（保留数据卷）：
+#   docker compose -f deploy/milvus/docker-compose.yml down
+#
+# 镜像获取（本机 Docker Hub 直连被阻断，逐个镜像站试过，记录在 tools/README.md）：
+#   quay.io/coreos/etcd:v3.5.13                       直连可拉
+#   milvusdb/milvus:v3.0.0                            dockerproxy.net/milvusdb/milvus:v3.0.0 再 tag
+#   minio/minio:RELEASE.2024-04-18T19-09-19Z          minio 官方仓库被墙，用
+#                                                     dockerproxy.net/bitnamilegacy/minio:2024.4.18 再 tag
+#   zilliz/attu:v3.0.0                                dockerproxy.net/zilliz/attu:v3.0.0 再 tag
+# 拉取脚本：tools/pull_milvus.ps1
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.13
+    container_name: xi-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - xiaoyi-net
+
+  minio:
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+    container_name: xi-minio
+    # 本机拉不到官方 minio 镜像，用 dockerproxy.net/bitnamilegacy/minio:2024.4.18 再 tag 顶替。
+    # bitnami 镜像默认以 uid=1001 运行，写 /minio_data 会报
+    # 「unable to create (/minio_data/.minio.sys/tmp) file access denied」并无限重启，
+    # 所以这里显式用 root。换成官方镜像时可以删掉这一行。
+    user: "0"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin2026}
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/minio_data
+    healthcheck:
+      # bitnamilegacy/minio 镜像里有 curl；官方 minio 镜像也有。若换成无 curl 的镜像，
+      # 改成 ["CMD", "mc", "ready", "local"] 或直接删掉 healthcheck。
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - xiaoyi-net
+
+  milvus:
+    image: milvusdb/milvus:v3.0.0
+    container_name: xi-milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin2026}
+    command: milvus run standalone
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+      # user.yaml 里是智谱的 embedding / rerank 凭据，实际文件被 .gitignore 忽略，
+      # 仓库里只留 user.yaml.example。首次使用先复制并填 key：
+      #   cp deploy/milvus/user.yaml.example deploy/milvus/user.yaml
+      - ./user.yaml:/milvus/configs/user.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      # Milvus standalone 首次启动要建 meta、连 etcd/minio，实测 40–60 秒，
+      # 默认 0 会让 attu 提前起而连不上。
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - xiaoyi-net
+
+  attu:
+    image: zilliz/attu:v3.0.0
+    container_name: xi-attu
+    ports:
+      - "${ATTU_PORT:-3000}:3000"
+    environment:
+      - MILVUS_ADDRESS=milvus:19530
+    volumes:
+      - attu-data:/data
+    depends_on:
+      milvus:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - xiaoyi-net
+
+volumes:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  attu-data:
+
+networks:
+  xiaoyi-net:
+    name: xiaoyi-net
+    driver: bridge

@@ -122,8 +122,10 @@ jobs:
           python test/scripts/serve_java.py --detach --db-name xiaoyi_rag_gate --profile gate-probe --log test-artifacts/ci-java-real.log
           echo "started java (real provider)"
 
-      - name: Real-provider gates (J0 J1 J2 J4 J6 A1 J7)
+      - name: Real-provider gates (J0 J1 J2 J4 J6 A1 A2 J7)
         # J4/J6 需要真实 provider 的 SSE 帧、stage 映射与五阶段节拍。
+        # A2 用进程内 TestClient + AI_PROVIDER=mock + MILVUS_URI="" 跑切分与引用契约，
+        # 不依赖外部 Milvus，所以放在这一步而不是单独起服务。
         run: |
           python -m pytest \
             test/J0-contract \
@@ -132,6 +134,7 @@ jobs:
             test/J4-ingest \
             test/J6-integration \
             test/A1-ai-skeleton \
+            test/A2-rag \
             test/J7-isolation \
             -q
 

@@ -1,0 +1,41 @@
+# Milvus standalone 的 user.yaml 模板
+#
+# 真实文件 deploy/milvus/user.yaml 里有凭据，已被 .gitignore 忽略（第 60 行）。
+# 首次使用：
+#   cp deploy/milvus/user.yaml.example deploy/milvus/user.yaml
+# 然后把下面的 <ZHIPU_API_KEY> 换成真实 key。
+#
+# 作用（Milvus 2.5+ / 3.x 的 Function 特性）：
+#   - textEmbedding：让 Milvus 自己调 embedding 接口，写库时不用先在 Python 里算向量；
+#   - rerank：让 Milvus 在 search 阶段直接重排。
+#
+# 本项目的默认路径是 Python 侧自己调 embedding
+# （server-ai/app/core/rag/embedder.py → 智谱 /v4/embeddings），
+# 所以 user.yaml 不是必须的 —— 只有在想用 Milvus 内置 Function 时才需要。
+# 但 compose 里是 ro 挂载，文件不存在时容器起不来，因此这里给一份可用的最小配置。
+#
+# 两个实测踩过的坑（2026-11-07，Milvus v3.0.0 + pymilvus 3.0.2）：
+#   1) url 必须写到 /embeddings 为止。Milvus 的 openai provider 不会自动补后缀，
+#      把 url 原样当请求地址；写成 .../v4 会拿到 404 {"path":"/v4"}，
+#      建带函数的集合时报 code=2400 call service failed。
+#   2) Function 的 params 里模型名键是 model_name，不是 model。
+#      写成 {'model': 'embedding-3'} 会被丢掉，智谱回
+#      400 {"error":{"code":"1214","message":"model:model cannot be empty."}}。
+
+credential:
+  zhipu_apikey:
+    apikey: <ZHIPU_API_KEY>
+
+function:
+  rerank:
+    model:
+      providers:
+        jina:                # 智谱 rerank 接口与 Jina/Cohere 契约兼容
+          credential: zhipu_apikey
+          url: https://open.bigmodel.cn/api/paas/v4/rerank
+  textEmbedding:
+    providers:
+      openai:                # 智谱 embedding 接口兼容 OpenAI 协议
+        credential: zhipu_apikey
+        # 坑 1：必须带 /embeddings 后缀
+        url: https://open.bigmodel.cn/api/paas/v4/embeddings

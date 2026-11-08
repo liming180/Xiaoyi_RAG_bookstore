@@ -1,4 +1,4 @@
-# 用 Docker 起整套服务，数据库用「本机已装的 MySQL 8.0.39」，不起 mysql 容器。
+﻿# 用 Docker 起整套服务，数据库用「本机已装的 MySQL 8.0.39」，不起 mysql 容器。
 #
 # 这是「容器内构建」形态：java 用 maven 基础镜像编译，frontend 用 node 基础镜像
 # npm ci + vite build。需要能拉到 maven / node / nginx / python 四个基础镜像。
@@ -31,8 +31,26 @@ services:
       # 只被 server-ai/app/config.py 读取，Java 不读。默认 1200 > Java 的 1s 轮询周期，
       # 否则 splitting/embedding/summarizing 三个阶段会在两次轮询之间跑完。
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+      # 向量化与生成走真实服务（默认智谱 OpenAI 兼容端点）；设 mock 则完全离线。
+      AI_PROVIDER: ${AI_PROVIDER:-real}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # Milvus 在 deploy/milvus/docker-compose.yml 里，共用 xiaoyi-net 网络。
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
     volumes:
       - ai-state:/var/lib/xiaoyi-ai
+    networks:
+      - default
+      - xiaoyi-net
     expose:
       - "8000"
     healthcheck:
@@ -68,6 +86,8 @@ services:
       MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
     volumes:
       - ../server-java/storage:/app/storage
     # Docker Desktop（Windows/macOS）自带 host.docker.internal；Linux 上要靠这条映射。
@@ -100,3 +120,9 @@ services:
 
 volumes:
   ai-state:
+
+networks:
+  # 与 deploy/milvus/docker-compose.yml 共用同一个网络，python-ai 才能用容器名 milvus 解析。
+  xiaoyi-net:
+    external: true
+    name: xiaoyi-net
