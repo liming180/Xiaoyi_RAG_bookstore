@@ -3,3 +3,7 @@ uvicorn[standard]>=0.29
 pydantic>=2.0
 pydantic-settings>=2.0
 httpx>=0.27
+# A2 真实向量库：连 Milvus standalone（deploy/milvus/docker-compose.yml）。
+# mock 档不 import 它，pymilvus 缺失时只有 MILVUS_URI 非空的真实链路会报错，
+# 报错信息由 vector_store/store.py 的 _ensure_client() 给出明确指引。
+pymilvus>=2.5

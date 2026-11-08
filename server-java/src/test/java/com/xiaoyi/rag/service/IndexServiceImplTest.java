@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaoyi.rag.client.AiServiceClient;
 import com.xiaoyi.rag.client.dto.AiChunk;
+import com.xiaoyi.rag.client.dto.AiIndexManifest;
 import com.xiaoyi.rag.client.dto.AiIngestTask;
 import com.xiaoyi.rag.client.dto.AiParseRequest;
 import com.xiaoyi.rag.client.dto.AiParseResult;
@@ -337,6 +338,56 @@ class IndexServiceImplTest {
 
         assertThat(service.listChunks(OTHER, null, null, null)).isEmpty();
         verify(chunks, never()).findByUserIdOrderBySeqAscIdAsc(OWNER);
+    }
+
+    /* ------------------------------------------------------------ 状态 */
+
+    @Test
+    @DisplayName("embedding 模型名以 Python manifest 为准，不报 Java 侧登记值")
+    void statusReportsEmbeddingModelFromManifest() {
+        IndexTask done = task(7L, OWNER, IndexTask.STATUS_SUCCEEDED);
+        done.setEmbeddingModel("mock-embedding");
+        done.setFinishedAt(1_700_000_500L);
+        when(documents.findByUploadedByAndDeletedFalseOrderByUpdatedAtDescIdDesc(OWNER))
+                .thenReturn(List.of());
+        when(tasks.findFirstByUserIdAndStatusOrderByFinishedAtDescIdDesc(
+                        OWNER, IndexTask.STATUS_SUCCEEDED))
+                .thenReturn(Optional.of(done));
+        when(chunks.countByUserId(OWNER)).thenReturn(3L);
+        when(ai.getIndexManifest(OWNER))
+                .thenReturn(
+                        new AiIndexManifest(
+                                "ready", "embedding-3", 180, 30, 1, 3, 1_700_000_500L, "", null));
+
+        var vo = service.status(OWNER);
+
+        assertThat(vo.status()).isEqualTo("ready");
+        assertThat(vo.embeddingModel())
+                .as("Java 侧登记的是 mock-embedding，但真正做向量化的是 Python")
+                .isEqualTo("embedding-3");
+        assertThat(vo.manifest().embeddingModel())
+                .as("顶层字段与 manifest 快照不能自相矛盾")
+                .isEqualTo("embedding-3");
+    }
+
+    @Test
+    @DisplayName("manifest 没给模型名时回落到任务登记值")
+    void statusFallsBackToTaskModelWhenManifestIsSilent() {
+        IndexTask done = task(8L, OWNER, IndexTask.STATUS_SUCCEEDED);
+        done.setEmbeddingModel("text-embedding-3-small");
+        done.setFinishedAt(1_700_000_600L);
+        when(documents.findByUploadedByAndDeletedFalseOrderByUpdatedAtDescIdDesc(OWNER))
+                .thenReturn(List.of());
+        when(tasks.findFirstByUserIdAndStatusOrderByFinishedAtDescIdDesc(
+                        OWNER, IndexTask.STATUS_SUCCEEDED))
+                .thenReturn(Optional.of(done));
+        when(chunks.countByUserId(OWNER)).thenReturn(2L);
+        when(ai.getIndexManifest(OWNER))
+                .thenReturn(
+                        new AiIndexManifest(
+                                "ready", "  ", 180, 30, 1, 2, 1_700_000_600L, "", null));
+
+        assertThat(service.status(OWNER).embeddingModel()).isEqualTo("text-embedding-3-small");
     }
 
     /* ------------------------------------------------------------ 构造 */

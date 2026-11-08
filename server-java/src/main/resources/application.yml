@@ -97,6 +97,16 @@ xiaoyi:
     secondary-bootstrap-password: ${AUTH_SECONDARY_BOOTSTRAP_PASSWORD:}
   storage:
     root: ${STORAGE_ROOT:./storage}
+  index:
+    # 建库参数。契约 chunkSize 区间 50..1000，默认 180/30 与前端 constants 一致。
+    default-chunk-size: ${INDEX_CHUNK_SIZE:180}
+    default-overlap: ${INDEX_OVERLAP:30}
+    # 只是「登记时以为用的是谁」；真正生效的模型名以 Python 的 /index/status
+    # 回传的 manifest 为准（IndexServiceImpl#status 优先用 manifest 的值）。
+    # 用真实 embedding 时把它设成与 Python 的 EMBEDDING_MODEL 一致，
+    # 否则未建库状态下前端会显示 mock-embedding。
+    embedding-model: ${INDEX_EMBEDDING_MODEL:mock-embedding}
+    poll-interval-ms: ${INDEX_POLL_INTERVAL_MS:1000}
 
 logging:
   level:

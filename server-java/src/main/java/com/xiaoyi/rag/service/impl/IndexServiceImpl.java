@@ -169,7 +169,7 @@ public class IndexServiceImpl implements IndexService {
                     embeddingModel,
                     lastBuiltAt,
                     "AI 服务不可达",
-                    manifestOf(lastOk.orElse(null)));
+                    manifestOf(lastOk.orElse(null), embeddingModel));
         }
 
         List<String> stale = new ArrayList<>();
@@ -178,6 +178,16 @@ public class IndexServiceImpl implements IndexService {
                 stale.add(doc.getTitle() == null ? doc.getFilename() : doc.getTitle());
             }
         }
+        // embedding 模型名以 Python 的 manifest 为准：真正做向量化的是它，Java 这边的
+        // 配置只是「本次任务登记时以为用的是谁」。两者不一致时若继续报 Java 侧的值，
+        // 前端会显示一个从没跑过的模型名（实测容器栈里曾长期显示 mock-embedding，
+        // 而 Milvus 里存的是 2048 维的 embedding-3 向量）。
+        String reportedModel =
+                manifest != null
+                                && manifest.embeddingModel() != null
+                                && !manifest.embeddingModel().isBlank()
+                        ? manifest.embeddingModel()
+                        : embeddingModel;
         if (!stale.isEmpty()) {
             return new IndexStatusVO(
                     "needs_rebuild",
@@ -185,10 +195,10 @@ public class IndexServiceImpl implements IndexService {
                     chunkCount,
                     chunkSize,
                     overlap,
-                    embeddingModel,
+                    reportedModel,
                     lastBuiltAt,
                     stale.size() + " 份资料尚未入库",
-                    manifestOf(lastOk.orElse(null)));
+                    manifestOf(lastOk.orElse(null), reportedModel));
         }
         if (lastOk.isEmpty()) {
             return new IndexStatusVO(
@@ -197,7 +207,7 @@ public class IndexServiceImpl implements IndexService {
                     chunkCount,
                     chunkSize,
                     overlap,
-                    embeddingModel,
+                    reportedModel,
                     lastBuiltAt,
                     "尚未建库",
                     null);
@@ -212,10 +222,10 @@ public class IndexServiceImpl implements IndexService {
                     chunkCount,
                     chunkSize,
                     overlap,
-                    embeddingModel,
+                    reportedModel,
                     lastBuiltAt,
                     "建库参数已变更",
-                    manifestOf(lastOk.get()));
+                    manifestOf(lastOk.get(), reportedModel));
         }
         return new IndexStatusVO(
                 "ready",
@@ -223,10 +233,10 @@ public class IndexServiceImpl implements IndexService {
                 chunkCount,
                 chunkSize,
                 overlap,
-                embeddingModel,
+                reportedModel,
                 lastBuiltAt,
                 null,
-                manifestOf(lastOk.get()));
+                manifestOf(lastOk.get(), reportedModel));
     }
 
     /* ------------------------------------------------------------ 重建 */
@@ -811,15 +821,19 @@ public class IndexServiceImpl implements IndexService {
     /**
      * manifest 快照：从最近成功任务还原。
      *
+     * <p>{@code embeddingModel} 由调用方传入，而不是直接读任务登记值：Python 的 manifest 才是
+     * 「实际用的哪个模型」的权威来源，两者不一致时要让快照也反映真实值，否则前端拿到的 顶层字段与 manifest 自相矛盾。
+     *
      * @param task 最近成功任务，可为 null
+     * @param embeddingModel 对外报告的模型名
      * @return 快照；无成功任务时返回 null
      */
-    private IndexManifestVO manifestOf(IndexTask task) {
+    private IndexManifestVO manifestOf(IndexTask task, String embeddingModel) {
         if (task == null) {
             return null;
         }
         return new IndexManifestVO(
-                task.getEmbeddingModel(),
+                embeddingModel,
                 task.getChunkSize(),
                 task.getOverlap(),
                 task.getDocCount(),

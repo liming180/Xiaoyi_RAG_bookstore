@@ -122,21 +122,27 @@ async def eval_batch(
     _token: str = Depends(require_token),
     user_id: int = Depends(require_user_id),
 ):
-    """批量评测，仅使用请求者自己的语料上下文（当前为模拟打分）。"""
+    """批量评测：direct 与 rag 各答一次，按关键词分组判定是否命中。
+
+    与对话链路共用同一套检索与生成，`rag_sources` 是本次 RAG 答案实际用到的
+    chunk_id 列表，长度受 `k` 约束。评测只读，不写对话、不写反馈。
+    """
+    provider = provider_from_settings(get_settings())
     results = []
     for case in req.cases:
-        answer = f"这是针对“{case.question}”的模拟回答。"
-        groups = [group.lower().split("/") for group in case.keywords.split("|")]
-        passed = all(any(word in answer.lower() for word in group) for group in groups)
+        started = time.perf_counter()
+        direct_answer = await _collect(provider, case.question, [])
+        citations = ingest.context_citations(user_id, case.question, req.k)
+        rag_answer = await _collect(provider, case.question, citations)
         results.append(
             {
                 "question_id": case.id,
-                "direct_answer": answer,
-                "direct_passed": passed,
-                "rag_answer": answer,
-                "rag_passed": passed,
-                "rag_sources": [],
-                "elapsed_ms": 0,
+                "direct_answer": direct_answer,
+                "direct_passed": _judge(direct_answer, case.keywords),
+                "rag_answer": rag_answer,
+                "rag_passed": _judge(rag_answer, case.keywords),
+                "rag_sources": [item["chunk_id"] for item in citations],
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
             }
         )
     return envelope(
@@ -147,6 +153,32 @@ async def eval_batch(
             "passed_rag": sum(1 for row in results if row["rag_passed"]),
         }
     )
+
+
+async def _collect(provider, question: str, citations: list[dict]) -> str:
+    """把流式增量拼成整段回答，评测需要完整文本才能判分。"""
+    chunks: list[str] = []
+    async for token in provider.answer(question, citations):
+        chunks.append(token)
+    return "".join(chunks)
+
+
+def _judge(answer: str, keywords: str) -> bool:
+    """关键词分组判分：组内 `/` 表示同义，组间 `|` 表示必须全部命中。
+
+    与 Java 侧 `EvalServiceImpl.judge` 的分组语义保持一致，避免两侧对同一答案
+    给出不同结论。
+    """
+    if not keywords:
+        return False
+    for group in keywords.split("|"):
+        alternatives = [word.strip() for word in group.split("/") if word.strip()]
+        if not alternatives:
+            continue
+        if not any(word in answer for word in alternatives):
+            return False
+    return True
+
 
 
 @router.get("/health")
