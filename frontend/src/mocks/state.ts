@@ -122,6 +122,7 @@ function initialState(): MockState {
         source: 'feedback',
         status: 'pending',
         createdAt: now - 7200_000,
+        keywords: null,
       },
     ],
     feedback: {},

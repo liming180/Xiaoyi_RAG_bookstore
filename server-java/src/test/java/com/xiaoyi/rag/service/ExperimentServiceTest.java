@@ -10,6 +10,7 @@ import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.config.XiaoyiProperties;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.entity.Experiment;
+import com.xiaoyi.rag.repository.EvalCandidateRepository;
 import com.xiaoyi.rag.repository.ExperimentRepository;
 import com.xiaoyi.rag.repository.ExperimentRunRepository;
 import com.xiaoyi.rag.service.impl.ExperimentServiceImpl;
@@ -27,6 +28,7 @@ class ExperimentServiceTest {
     private final ExperimentRunRepository runs = mock(ExperimentRunRepository.class);
     private final EvalService eval = mock(EvalService.class);
     private final IndexService indexes = mock(IndexService.class);
+    private final EvalCandidateRepository candidates = mock(EvalCandidateRepository.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final ExperimentServiceImpl service;
 
@@ -37,7 +39,14 @@ class ExperimentServiceTest {
         properties.getIndex().setDefaultOverlap(30);
         service =
                 new ExperimentServiceImpl(
-                        experiments, runs, eval, indexes, properties, new ObjectMapper(), manager);
+                        experiments,
+                        runs,
+                        eval,
+                        indexes,
+                        properties,
+                        new ObjectMapper(),
+                        manager,
+                        candidates);
     }
 
     @Test

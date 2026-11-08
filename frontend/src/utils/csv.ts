@@ -56,6 +56,25 @@ export function downloadCsv(filename: string, content: string): void {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * 触发浏览器下载一个已经成型的 Blob。
+ *
+ * 与 `downloadCsv` 的区别：这里不再编码一刀，服务端已经把 CSV 串好了（含 BOM、含转义）。
+ * 用在 `/eval/candidates/export` 这类「后端直接回 text/csv」的端点上 —— 重新拼一遍只会
+ * 把服务端的转义规则换成前端的，两边一漂移就会出现「某一行多一列」。
+ */
+export function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 /** 文件名里的时间戳：20261030-2315，避免同名覆盖 */
 export function csvTimestamp(date = new Date()): string {
   const pad = (n: number): string => String(n).padStart(2, '0');

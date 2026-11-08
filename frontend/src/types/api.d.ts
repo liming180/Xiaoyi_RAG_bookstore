@@ -364,6 +364,13 @@ export interface EvalCandidate {
   source: 'feedback' | 'manual';
   status: 'pending' | 'accepted' | 'ignored';
   createdAt: number;
+  /**
+   * 人工补的判分关键词（语法同 `assets/eval/keywords.csv`）。
+   *
+   * `null` = 未补：该候选可以进实验，但标 `scored:false`，不计入 hitRate 分母。
+   * 前端据此在候选池提示「采纳后能不能计分」。
+   */
+  keywords: string | null;
 }
 
 /* -------------------------------------------------------------- 参数实验 */

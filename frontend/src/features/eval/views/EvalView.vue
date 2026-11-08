@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus';
 import type { AnswerMode, EvalCandidate, FeedbackSummary } from '@/types/api';
 import { evalApi } from '@/api';
 import { ApiError } from '@/api';
+import { downloadBlob } from '@/utils/csv';
 import BatchRunner from '../components/BatchRunner.vue';
 import RunHistory from '../components/RunHistory.vue';
 import CandidatePool from '../components/CandidatePool.vue';
@@ -82,18 +83,53 @@ async function loadCandidates(): Promise<void> {
   }
 }
 
-async function onDecideCandidate(id: string, status: 'accepted' | 'ignored'): Promise<void> {
+async function onDecideCandidate(
+  id: string,
+  status: 'accepted' | 'ignored',
+  keywords?: string,
+): Promise<void> {
   if (candidateBusyId.value) return;
   candidateBusyId.value = id;
   try {
-    await evalApi.decideCandidate(id, status);
+    await evalApi.decideCandidate(id, status, keywords);
     const target = candidates.value.find((c) => c.id === id);
     if (target) target.status = status;
-    ElMessage.success(status === 'accepted' ? '已纳入实验问题集' : '已忽略该候选');
+    if (status === 'accepted') {
+      // 补了关键词才算「能计分」；没补的要当场说清楚，别等报告出来才发现少算一题。
+      ElMessage.success(
+        keywords && keywords.trim() !== ''
+          ? '已纳入实验问题集（可计分）'
+          : '已纳入实验问题集（未填关键词，进实验后不计分）',
+      );
+    } else {
+      ElMessage.success('已忽略该候选');
+    }
   } catch (e) {
     ElMessage.error(e instanceof ApiError ? e.message : '操作失败，请重试');
   } finally {
     candidateBusyId.value = null;
+  }
+}
+
+/**
+ * 导出已采纳候选为题库 CSV。
+ *
+ * 走 `evalApi.exportCandidates()` 拿 Blob 再在前端触发下载：这条端点回 `text/csv`，
+ * 直接 `window.open` 会把 Bearer token 丢掉（token 在 axios 拦截器里加），必然 401。
+ */
+const exporting = ref(false);
+
+async function onExportCandidates(): Promise<void> {
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
+    const blob = await evalApi.exportCandidates();
+    downloadBlob('eval-candidates.csv', blob);
+    ElMessage.success('已导出候选题库，补完 keywords 后可贴回 assets/eval/questions.csv');
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '导出失败，请重试');
+  } finally {
+    exporting.value = false;
   }
 }
 
@@ -252,8 +288,10 @@ onBeforeUnmount(() => {
         :loading="candidatesLoading"
         :error="candidatesError"
         :busy-id="candidateBusyId"
+        :exporting="exporting"
         @decide="onDecideCandidate"
         @refresh="loadCandidates"
+        @export="onExportCandidates"
       />
 
       <ExperimentMatrix

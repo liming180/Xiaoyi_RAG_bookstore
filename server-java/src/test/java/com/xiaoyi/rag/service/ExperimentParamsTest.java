@@ -18,12 +18,14 @@ import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.config.XiaoyiProperties;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.dto.RebuildRequest;
+import com.xiaoyi.rag.model.entity.EvalCandidate;
 import com.xiaoyi.rag.model.entity.Experiment;
 import com.xiaoyi.rag.model.entity.ExperimentRun;
 import com.xiaoyi.rag.model.vo.EvalCaseResultVO;
 import com.xiaoyi.rag.model.vo.EvalQuestionVO;
 import com.xiaoyi.rag.model.vo.IndexStatusVO;
 import com.xiaoyi.rag.model.vo.IndexTaskVO;
+import com.xiaoyi.rag.repository.EvalCandidateRepository;
 import com.xiaoyi.rag.repository.ExperimentRepository;
 import com.xiaoyi.rag.repository.ExperimentRunRepository;
 import com.xiaoyi.rag.service.impl.ExperimentServiceImpl;
@@ -57,6 +59,8 @@ class ExperimentParamsTest {
     private final ExperimentRunRepository runs = mock(ExperimentRunRepository.class);
     private final EvalService eval = mock(EvalService.class);
     private final IndexService indexes = mock(IndexService.class);
+
+    private final EvalCandidateRepository candidates = mock(EvalCandidateRepository.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
 
     /** 每次 rebuildForExperiment 收到的参数，按调用顺序。 */
@@ -74,7 +78,14 @@ class ExperimentParamsTest {
         properties.getIndex().setDefaultOverlap(30);
         service =
                 new ExperimentServiceImpl(
-                        experiments, runs, eval, indexes, properties, new ObjectMapper(), manager);
+                        experiments,
+                        runs,
+                        eval,
+                        indexes,
+                        properties,
+                        new ObjectMapper(),
+                        manager,
+                        candidates);
 
         Experiment experiment = new Experiment();
         experiment.setName("params");
@@ -213,7 +224,131 @@ class ExperimentParamsTest {
         assertThat(service.isRunning()).isFalse();
     }
 
+    /* ------------------------------------------- N4：候选题进实验的计分边界 */
+
+    /**
+     * 候选题补了关键词 → 计入分母。
+     *
+     * <p>观测点是 {@code metrics.scored / unscored} 与 hitRate 的分母：T01 + C8 共 2 题、都有关键词， 那么 scored 必须是
+     * 2，hitRate 是「判定通过数 / 2」而不是 / 题数以外的任何东西。
+     */
+    @Test
+    void acceptedCandidateWithKeywordsCountsTowardHitRate() throws Exception {
+        stubTwoQuestionsWithCandidate("4本/4册");
+        when(indexes.status(OWNER)).thenReturn(status(180, 30));
+
+        service.create(OWNER, candidateRequest(List.of("T01", "C8")));
+        awaitIdle();
+
+        String metrics = lastMetrics();
+        assertThat(metrics).contains("\"scored\":2");
+        assertThat(metrics).contains("\"unscored\":0");
+    }
+
+    /**
+     * 候选题没补关键词 → 照样跑，但不进分母。
+     *
+     * <p>这条是整个 N4 的判定核心：没有关键词就判不出对错（{@code judge()} 恒 false）。 如果把这种题算进分母，用户每采纳一道没补关键词的候选，hitRate
+     * 就会莫名其妙掉一截 —— 而他自己什么都没做错。
+     */
+    @Test
+    void acceptedCandidateWithoutKeywordsIsUnscoredAndExcludedFromDenominator() throws Exception {
+        stubTwoQuestionsWithCandidate(null);
+        when(indexes.status(OWNER)).thenReturn(status(180, 30));
+
+        service.create(OWNER, candidateRequest(List.of("T01", "C8")));
+        awaitIdle();
+
+        String metrics = lastMetrics();
+        assertThat(metrics).contains("\"scored\":1");
+        assertThat(metrics).contains("\"unscored\":1");
+        // 1 题通过 / 1 道可计分题 = 1.0；不是 1/2。分母错了这条会变成 0.5。
+        assertThat(metrics).contains("\"hitRate\":1.0");
+    }
+
+    /** 只有候选题、且全都没关键词：分母为 0，hitRate 记 0 而不是 NaN / Infinity。 */
+    @Test
+    void allUnscoredQuestionsReportZeroHitRate() throws Exception {
+        stubTwoQuestionsWithCandidate(null);
+        when(indexes.status(OWNER)).thenReturn(status(180, 30));
+
+        service.create(OWNER, candidateRequest(List.of("C8")));
+        awaitIdle();
+
+        String metrics = lastMetrics();
+        assertThat(metrics).contains("\"scored\":0");
+        assertThat(metrics).contains("\"unscored\":1");
+        assertThat(metrics).contains("\"hitRate\":0.0");
+    }
+
+    /** pending 候选（还没采纳）不能进实验：与「题号写错」同一条 40001，不给存在性信号。 */
+    @Test
+    void pendingCandidateCannotJoinExperiment() {
+        // findOwnedByIdAndStatus 只认 accepted；candidates mock 默认回 Optional.empty()。
+        assertThatThrownBy(() -> service.create(OWNER, candidateRequest(List.of("C8"))))
+                .isInstanceOfSatisfying(
+                        ApiException.class,
+                        error -> {
+                            assertThat(error.getCode()).isEqualTo(40001);
+                            assertThat(error.getMessage()).contains("题目不存在: C8");
+                        });
+        verify(experiments, never()).saveAndFlush(any());
+        assertThat(service.isRunning()).isFalse();
+    }
+
+    /** 题号不是 C<数字> 的形式，与「题号不存在」同样处理，不抛 NumberFormatException。 */
+    @Test
+    void malformedCandidateIdIsInvalidParam() {
+        assertThatThrownBy(() -> service.create(OWNER, candidateRequest(List.of("Cabc"))))
+                .isInstanceOfSatisfying(
+                        ApiException.class, error -> assertThat(error.getCode()).isEqualTo(40001));
+        verify(experiments, never()).saveAndFlush(any());
+    }
+
     /* ------------------------------------------------------------ 工具 */
+
+    /** 让题库回一道 T01，候选池回一道 C8（关键词按入参，null = 没补）。 */
+    private void stubTwoQuestionsWithCandidate(String keywords) {
+        EvalCandidate candidate = new EvalCandidate();
+        candidate.setQuestion("这本书能借几天？");
+        candidate.setKeywords(keywords);
+        when(candidates.findOwnedByIdAndStatus(8L, OWNER, "accepted"))
+                .thenReturn(Optional.of(candidate));
+        // evaluate 必须按传进来的题数返回：题数对不上会被 execute 判成「结果数量不完整」。
+        when(eval.evaluate(anyLong(), any(), anyInt(), any()))
+                .thenAnswer(
+                        call -> {
+                            List<EvalQuestionVO> asked = call.getArgument(1);
+                            return asked.stream()
+                                    .map(
+                                            q ->
+                                                    new EvalCaseResultVO(
+                                                            q.id(),
+                                                            q.type(),
+                                                            q.question(),
+                                                            "直答",
+                                                            true,
+                                                            "查资料答案",
+                                                            true,
+                                                            List.of("D01-C001"),
+                                                            10L))
+                                    .toList();
+                        });
+    }
+
+    private String lastMetrics() {
+        ArgumentCaptor<ExperimentRun> saved = ArgumentCaptor.forClass(ExperimentRun.class);
+        verify(runs, atLeastOnce()).save(saved.capture());
+        return saved.getValue().getMetricsJson();
+    }
+
+    private CreateExperimentRequest candidateRequest(List<String> questionIds) {
+        return new CreateExperimentRequest(
+                "candidate",
+                questionIds,
+                new CreateExperimentRequest.ExperimentAxis(
+                        List.of(180), List.of(30), List.of(3), List.of(true), List.of(false)));
+    }
 
     private void awaitIdle() throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

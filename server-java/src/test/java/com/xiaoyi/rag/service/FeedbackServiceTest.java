@@ -158,6 +158,75 @@ class FeedbackServiceTest {
         verify(candidates, never()).save(any());
     }
 
+    /* ------------------------------------------------ N4：候选关键词与导出 */
+
+    /**
+     * 采纳时带 keywords → 落库；采纳时不带 → 保留原值（不是清空）。
+     *
+     * <p>为什么「不带」必须保留：前端「纳入实验」按钮先弹输入框，用户可能先补关键词采纳， 之后再从详情页点一次「采纳」只改状态；这时如果按「没带就清空」处理，刚补的关键词会静默丢失，
+     * 而报表上只会表现成 unscored+1 —— 找不到原因。
+     */
+    @Test
+    void acceptedCandidateStoresKeywordsAndMissingKeywordsKeepsExisting() {
+        EvalCandidate candidate = new EvalCandidate();
+        candidate.setStatus("pending");
+        when(candidates.existsOwnedById(8L, OWNER)).thenReturn(true);
+        when(candidates.findById(8L)).thenReturn(Optional.of(candidate));
+
+        service.decide(OWNER, "8", new CandidateDecisionRequest("accepted", "  4本/4册|21天  "));
+        assertThat(candidate.getKeywords()).isEqualTo("4本/4册|21天");
+
+        // 第二次只改状态、不带 keywords：已补的关键词要留着。
+        service.decide(OWNER, "8", new CandidateDecisionRequest("accepted"));
+        assertThat(candidate.getKeywords()).isEqualTo("4本/4册|21天");
+
+        // 明确传空串 = 用户清空了输入框，按「没补」处理。
+        service.decide(OWNER, "8", new CandidateDecisionRequest("accepted", "   "));
+        assertThat(candidate.getKeywords()).isNull();
+
+        assertCode(
+                () ->
+                        service.decide(
+                                OWNER,
+                                "8",
+                                new CandidateDecisionRequest("accepted", "x".repeat(513))),
+                40001);
+    }
+
+    /** 忽略时不写关键词：被忽略的候选不进实验，存了也没有消费者，反而让导出多出无意义的行。 */
+    @Test
+    void ignoredCandidateDoesNotTakeKeywords() {
+        EvalCandidate candidate = new EvalCandidate();
+        candidate.setKeywords("旧关键词");
+        when(candidates.existsOwnedById(8L, OWNER)).thenReturn(true);
+        when(candidates.findById(8L)).thenReturn(Optional.of(candidate));
+
+        service.decide(OWNER, "8", new CandidateDecisionRequest("ignored", "不该写入"));
+
+        assertThat(candidate.getStatus()).isEqualTo("ignored");
+        assertThat(candidate.getKeywords()).isEqualTo("旧关键词");
+    }
+
+    /** 导出：两列表头 + BOM 开头 + 只含 accepted；含逗号的问题要加引号转义。 */
+    @Test
+    void exportWritesCsvWithBomHeaderAndQuotesCommas() {
+        EvalCandidate first = new EvalCandidate();
+        first.setQuestion("普通图书能借几本？");
+        first.setKeywords("4本/4册");
+        EvalCandidate second = new EvalCandidate();
+        second.setQuestion("期刊,报纸能借吗？");
+        second.setKeywords(null);
+        when(candidates.findOwnedByStatus(OWNER, "accepted")).thenReturn(List.of(first, second));
+
+        String csv = service.exportCandidates(OWNER);
+
+        assertThat(csv).startsWith("\ufeffquestion,keywords\r\n");
+        assertThat(csv).contains("普通图书能借几本？,4本/4册\r\n");
+        // 含**半角**逗号的问题整段加引号；没补关键词的行留空但逗号仍在。
+        assertThat(csv).contains("\"期刊,报纸能借吗？\",\r\n");
+        assertThat(csv.lines().count()).isEqualTo(3);
+    }
+
     @Test
     void summaryIgnoresOtherUsersConversations() {
         when(conversations.findByUserIdAndDeletedFalseOrderByUpdatedAtDesc(OTHER))

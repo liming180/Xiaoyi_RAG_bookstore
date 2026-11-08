@@ -13,7 +13,12 @@ import com.xiaoyi.rag.service.ExperimentService;
 import com.xiaoyi.rag.service.FeedbackService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -132,6 +137,40 @@ public class EvalController {
             @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
         feedback.decide(CurrentUser.require(userId), id, request);
         return Result.ok();
+    }
+
+    /**
+     * 导出已采纳候选为题库 CSV。
+     *
+     * <p><b>为什么直接写 {@code HttpServletResponse} 而不是返回 {@code Result}：</b>这一条回的是 {@code
+     * text/csv}，不是统一信封。走 {@code ResponseEntity<String>} 时 Spring 会按请求的 {@code Accept} 做内容协商，而前端
+     * axios 默认发的是「json 优先、text 次之、通配兜底」那串 Accept，顺序上 JSON 在前，很容易被转成字符串 JSON（整段 CSV 被包在引号里，Excel
+     * 打开是一坨）。 直接往输出流写并显式定 Content-Type，任何 Accept 下都是原样的 CSV。
+     *
+     * <p>BOM 与这里无关：BOM 是给 Excel 认 UTF-8 的，写在正文第一个字符。
+     *
+     * @param userId 拦截器写入的当前用户
+     * @param response 原始响应，用于写 CSV 与下载头
+     * @throws IOException 写流失败
+     */
+    @GetMapping("/candidates/export")
+    @Operation(operationId = "exportEvalCandidates", summary = "导出已采纳候选为题库 CSV")
+    public void exportCandidates(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId,
+            HttpServletResponse response)
+            throws IOException {
+        String csv = feedback.exportCandidates(CurrentUser.require(userId));
+        response.setStatus(HttpServletResponse.SC_OK);
+        // charset 用 UTF-8：正文已经带 BOM，再由容器按 UTF-8 编码写出，Excel 才不会乱码。
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setHeader(
+                HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment()
+                        .filename("eval-candidates.csv", StandardCharsets.UTF_8)
+                        .build()
+                        .toString());
+        response.getWriter().write(csv);
+        response.flushBuffer();
     }
 
     /**

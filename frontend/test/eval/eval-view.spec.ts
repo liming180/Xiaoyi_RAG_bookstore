@@ -184,7 +184,7 @@ describe('评测页（P5）', () => {
     ).toHaveLength(QUESTION_COUNT);
   });
 
-  it('候选池：纳入 / 忽略都会改状态，且「只看待定」把已处理的藏起来', async () => {
+  it('候选池：纳入要先补关键词（可留空）/ 忽略直接生效，且「只看待定」把已处理的藏起来', async () => {
     const st = getState();
     // 种子数据自带一条 pending，先清空才能断言精确条数
     st.candidates.length = 0;
@@ -202,11 +202,30 @@ describe('评测页（P5）', () => {
 
     expect(wrapper.get('[data-testid="pool-stat-pending"]').text()).toContain('2');
 
+    // N4：点「纳入实验」只打开关键词输入框，不直接提交 —— 否则一补关键词就得先忽略再重来。
     await wrapper.get('[data-testid="candidate-accept-cand-a"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="candidate-keywords-cand-a"]').exists()).toBe(true);
+    // 取消不发请求，状态保持待定
+    await wrapper.get('[data-testid="candidate-cancel-cand-a"]').trigger('click');
+    await flushPromises();
+    expect(getState().candidates.find((c) => c.id === 'cand-a')?.status).toBe('pending');
+
+    await wrapper.get('[data-testid="candidate-accept-cand-a"]').trigger('click');
+    await flushPromises();
+    const input = wrapper.get('[data-testid="candidate-keywords-cand-a"] input');
+    await input.setValue('3次');
+    await wrapper.get('[data-testid="candidate-confirm-cand-a"]').trigger('click');
     await waitFor(
       () => getState().candidates.find((c) => c.id === 'cand-a')?.status === 'accepted',
       8000,
       '纳入成功',
+    );
+    // 关键词要真的发出去，落在 mock 状态里
+    await waitFor(
+      () => getState().candidates.find((c) => c.id === 'cand-a')?.keywords === '3次',
+      8000,
+      '关键词落库',
     );
     await waitFor(() => cards() === 1, 8000, '只看待定只剩 1 条');
 
@@ -217,6 +236,36 @@ describe('评测页（P5）', () => {
       '忽略成功',
     );
     await waitFor(() => wrapper.find('[data-testid="pool-empty"]').exists(), 8000, '空态');
+  });
+
+  it('候选池：留空关键词也能纳入，但会提示该题不计分', async () => {
+    getState().candidates.length = 0;
+    getState().candidates.unshift({
+      id: 'cand-c',
+      question: '库里有几本期刊？',
+      source: 'feedback',
+      status: 'pending',
+      createdAt: Date.now(),
+    });
+
+    const { wrapper } = await mountPage('candidates');
+    await waitFor(
+      () => wrapper.find('[data-testid="candidate-accept-cand-c"]').exists(),
+      8000,
+      '候选卡片',
+    );
+
+    await wrapper.get('[data-testid="candidate-accept-cand-c"]').trigger('click');
+    await flushPromises();
+    // 输入框留空，直接确认
+    await wrapper.get('[data-testid="candidate-confirm-cand-c"]').trigger('click');
+    await waitFor(
+      () => getState().candidates.find((c) => c.id === 'cand-c')?.status === 'accepted',
+      8000,
+      '留空也纳入',
+    );
+    const saved = getState().candidates.find((c) => c.id === 'cand-c');
+    expect(saved?.keywords ?? '').toBe('');
   });
 
   it('候选池：空池显示引导文案', async () => {

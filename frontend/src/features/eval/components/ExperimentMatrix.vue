@@ -69,11 +69,14 @@ const finishedGroups = computed(() => props.experiment?.finishedGroups ?? 0);
 const sortedRuns = computed(() => [...props.runs]);
 
 /**
- * 未计分题总数：候选题没填判分关键词时，后端会在 `metrics.unscored` 计数。
- * 大于 0 时对比表下方要给一行说明，否则用户会以为命中率掉了。
+ * 未计分题数：候选题没填判分关键词时，后端会在 `metrics.unscored` 计数。
+ * 大于 0 时对比表下方要给一行说明，否则用户会以为命中率莫名掉了。
+ *
+ * **取最大值而不是求和**：每组跑的是同一份题集，`unscored` 在每组里都是同一个数。
+ * 求和会把它乘上组数，8 组报出「64 道未计分」这种一眼假的数字。
  */
 const unscoredTotal = computed(() =>
-  props.runs.reduce((sum, run) => sum + (run.metrics.unscored ?? 0), 0),
+  props.runs.reduce((max, run) => Math.max(max, run.metrics.unscored ?? 0), 0),
 );
 
 function exportCsv(): void {
@@ -281,7 +284,7 @@ const bestLabel = computed(() => (props.best ? paramsLabel(props.best.params) : 
         </tbody>
       </table>
       <p v-if="unscoredTotal > 0" class="exp__unscored" data-testid="exp-unscored">
-        本组有 {{ unscoredTotal }} 道候选题未计分（未填判分关键词，不进 hitRate 分母）
+        有 {{ unscoredTotal }} 道候选题未计分（未填判分关键词，不进 hitRate 分母）
       </p>
     </div>
 

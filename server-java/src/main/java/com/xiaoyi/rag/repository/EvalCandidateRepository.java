@@ -46,6 +46,36 @@ public interface EvalCandidateRepository extends JpaRepository<EvalCandidate, Lo
     long countOwnedByStatus(@Param("userId") Long userId, @Param("status") String status);
 
     /**
+     * 当前用户自己某状态的候选，按创建时间倒序。
+     *
+     * @param userId 归属用户
+     * @param status 候选状态
+     * @return 命中行
+     */
+    @Query(
+            "select c from EvalCandidate c, Message m, Conversation conv"
+                    + " where c.messageId = m.id and m.conversationId = conv.id"
+                    + " and conv.userId = :userId and c.status = :status"
+                    + " order by c.createdAt desc, c.id desc")
+    List<EvalCandidate> findOwnedByStatus(
+            @Param("userId") Long userId, @Param("status") String status);
+
+    /**
+     * 按 id 取当前用户自己某状态的候选；实验选题走这条，别人的 id 与不存在的 id 都返回空。
+     *
+     * @param id 候选 id
+     * @param userId 归属用户
+     * @param status 候选状态
+     * @return 命中行
+     */
+    @Query(
+            "select c from EvalCandidate c, Message m, Conversation conv"
+                    + " where c.id = :id and c.messageId = m.id and m.conversationId = conv.id"
+                    + " and conv.userId = :userId and c.status = :status")
+    java.util.Optional<EvalCandidate> findOwnedByIdAndStatus(
+            @Param("id") Long id, @Param("userId") Long userId, @Param("status") String status);
+
+    /**
      * 候选是否属于该用户；别人的候选与不存在的 id 都返回 false，调用方统一按 40404 处理。
      *
      * @param id 候选 id

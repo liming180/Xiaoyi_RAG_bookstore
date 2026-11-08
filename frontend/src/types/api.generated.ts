@@ -1023,6 +1023,12 @@ export interface components {
             status: "pending" | "accepted" | "ignored";
             /** @description Unix 时间戳，单位秒 */
             createdAt: number;
+            /**
+             * @description 人工补的判分关键词（语法同 `assets/eval/keywords.csv`，组内 `/` 同义、组间 `|` 必须全中）。
+             *     未补时为 `null`：该候选可以进实验，但标 `scored:false`，不计入 hitRate 分母。
+             *     候选池据此提示「采纳后能不能计分」，不靠前端猜。
+             */
+            keywords: string | null;
         };
         /** @description 列表双形状：裸数组（后端默认）或 `{items}`。 */
         EvalCandidateList: components["schemas"]["EvalCandidate"][] | {

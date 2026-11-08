@@ -1,0 +1,163 @@
+{
+  "phase": "N4",
+  "name": "反馈闭环接通：候选 → 关键词 → 实验计分（C1）",
+  "pass": true,
+  "timestamp": "2026-11-09T00:20:00+08:00",
+  "gates": [
+    {
+      "key": "java-verify",
+      "command": "cd server-java && mvn -o -q spotless:apply && mvn -o verify",
+      "ok": true,
+      "exitCode": 0,
+      "counts": {
+        "testsPassed": 84,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "detail": "AuthServiceTest 11 / ChatServiceImplTest 11 / DocumentServiceImplTest 7 / EvalServiceOptionsTest 3 / ExperimentParamsTest 10 / ExperimentServiceTest 3 / FeedbackServiceTest 10 / IndexServiceImplTest 17 / TokenServiceTest 12",
+      "note": "FeedbackServiceTest 7 → 10（关键词存留与保留、ignored 不写、导出 BOM 与引号转义）；ExperimentParamsTest 5 → 10（有词计分、无词 unscored 不进分母、全无词 hitRate 0、pending 不可入、Cabc 40001）。"
+    },
+    {
+      "key": "J0-contract",
+      "command": "cd test && python -X utf8 -m pytest J0-contract -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "79 passed in 1.10s",
+      "note": "契约新增 EvalCandidate.keywords（oneOf [string, null]）与 |eval/candidates/export| 的 text/csv 响应；对外开放接口数仍是 29（导出端点在 N1 就进了契约，N4 才实现）。"
+    },
+    {
+      "key": "A1-ai-skeleton",
+      "command": "cd test && python -X utf8 -m pytest A1-ai-skeleton -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "24 passed in 9.04s",
+      "note": "N4 全在 Java 侧与前端，Python chat 链路零改动。"
+    },
+    {
+      "key": "A2-rag",
+      "command": "cd test && python -X utf8 -m pytest A2-rag -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "32 passed in 11.42s",
+      "note": "N3 的摘要卡用例全部保持绿。"
+    },
+    {
+      "key": "A3-hybrid",
+      "command": "cd test && python -X utf8 -m pytest A3-hybrid -q --no-header",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "29 passed in 6.46s",
+      "note": "N1 的 options/rerank 与 N3 的摘要兜底互不影响。"
+    },
+    {
+      "key": "J4-ingest",
+      "command": "python tools/p7_pytest.py J4-ingest -q --no-header（mock 档）",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "30 passed in 69.44s",
+      "provider": "mock",
+      "note": "建库与片段浏览无退化。"
+    },
+    {
+      "key": "J5-eval",
+      "command": "python tools/p7_pytest.py J5-eval -q --no-header（mock 档）",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "41 passed in 45.45s",
+      "provider": "mock",
+      "note": "原 29 条（N1 参数实验 6 + 老用例）+ 新建 test_candidate_loop.py 12 条。顺带改了 test_experiments.py 的一条老用例：它要在实验「正在跑」的窗口里断言 40902/40901，N4 接通 questionIds 后只有 1 道题，窗口缩到毫秒级 —— 改成先上传一份资料，让重建真的耗时（mock 约 4 秒/次），窗口才稳定。"
+    },
+    {
+      "key": "J2-crud+J3-sse+J7-isolation",
+      "command": "python tools/p7_pytest.py J2-crud J3-sse J7-isolation -q --no-header（mock 档）",
+      "ok": true,
+      "exitCode": 0,
+      "summary": "86 passed in 56.94s",
+      "provider": "mock",
+      "note": "J2-crud 30 / J3-sse 38 / J7-isolation 18，跨用户候选隔离无泄漏。"
+    },
+    {
+      "key": "frontend-gate",
+      "command": "cd frontend && node scripts/gate.mjs N4",
+      "ok": true,
+      "exitCode": 0,
+      "gates": [
+        {
+          "key": "lint",
+          "label": "ESLint",
+          "ok": true,
+          "command": "npx eslint . --max-warnings 0",
+          "elapsedMs": 12334
+        },
+        {
+          "key": "typecheck",
+          "label": "vue-tsc",
+          "ok": true,
+          "command": "npx vue-tsc --noEmit",
+          "elapsedMs": 2931
+        },
+        {
+          "key": "test",
+          "label": "vitest",
+          "ok": true,
+          "elapsedMs": 72256,
+          "counts": {
+            "filesPassed": 25,
+            "filesFailed": 0,
+            "testsPassed": 311,
+            "testsFailed": 0
+          }
+        },
+        {
+          "key": "contract",
+          "label": "contract drift",
+          "ok": true,
+          "elapsedMs": 139,
+          "command": "node scripts/check-contract-drift.mjs",
+          "tail": "30 个接口与契约一致"
+        }
+      ],
+      "report": "frontend/test-artifacts/gate-N4.json",
+      "note": "Vitest 310 → 311：候选池改成「先开关键词输入框再确认」的两步流，test/eval/eval-view.spec.ts 的候选池用例重写并新增「留空关键词也能纳入」。test/eval 单跑 63 passed。"
+    }
+  ],
+  "changes": {
+    "python": [],
+    "java": [
+      "server-java/src/main/resources/db/migration/V9__candidate_keywords.sql（新建）：eval_candidate 加 keywords VARCHAR(512) NULL，语法同 assets/eval/keywords.csv",
+      "EvalCandidate：加 keywords 列映射；EvalCandidateVO 改 6 参 record 带 keywords",
+      "CandidateDecisionRequest：改 record(status, @Size(max=512) keywords)，保留单参兼容构造器",
+      "EvalCandidateRepository：新增 findOwnedByStatus(userId, status) 与 findOwnedByIdAndStatus(id, userId, status)，后者对别人的 id 回 empty",
+      "FeedbackService.decide()：只在 accepted 时处理 keywords，normalizeKeywords() 三态（null=没填保留原值、空串=明确清空、>512 抛 40001）",
+      "FeedbackService.exportCandidates()：BOM + question,keywords 表头 + CSV 引号转义，只导出 accepted",
+      "EvalController：新增 GET /candidates/export，直接写 HttpServletResponse（Result 是手写信封类，没有 ResponseBodyAdvice，text/csv 走不了统一包装）",
+      "ExperimentServiceImpl：create() 解析 questionIds（C<id> 走候选池 accepted，否则 40001），题目在创建时固定后交给后台线程；execute() 用 Set<String> scorable 分组，metrics 加 scored/unscored，passed 只在 scorable 内计数"
+    ],
+    "contract": [
+      "docs/api/openapi-public.yaml：EvalCandidate 加 keywords（oneOf [string, null]）并进 required"
+    ],
+    "frontend": [
+      "CandidatePool.vue：decide 事件加第三参 keywords；纳入改成两步（先开输入框、再确认）；新增导出按钮（acceptedCount 为 0 或导出中时禁用）",
+      "EvalView.vue：透传 keywords；导出走 exportCandidates() + downloadBlob（不能用 window.open，会丢 Bearer token）",
+      "utils/csv.ts：新增 downloadBlob(filename, blob)",
+      "ExperimentMatrix.vue：unscoredTotal 从各组求和改成取最大值（每组跑同一份题集，求和会把 16 道题报成 64 道）",
+      "types/api.d.ts + mocks/state.ts + mocks/handlers.ts：EvalCandidate.keywords 与导出 handler"
+    ]
+  },
+  "notRun": [],
+  "notes": [
+    "边界拍板：候选没有判分关键词时 judge() 判不出对错。定案两档 —— 补了关键词就计分进分母；没补也能进实验但标 unscored，不进 hitRate 分母。这样「采纳一道还没补关键词的候选」不会让命中率莫名掉一截。",
+    "hitRate 的分子必须同步过滤：passed 只在 scorable 里 count。第一版没有过滤，测试里 stub 让没关键词的题也「通过」，算出 hitRate = 2.0 —— 分子分母必须落在同一批题上。",
+    "不带 keywords 的第二次 decide 不能清空已补的关键词：前端可能先补词、之后再点一次只改状态，按「没带就清空」处理会让关键词静默丢失，报表上只表现为 unscored+1，查不到原因。",
+    "testid 挂在 el-input 上会被透传到内部 input 元素，导致 |... input| 选择器找不到；必须挂在外层 div（pool__kw-input）。",
+    "Git Bash 之外的坑：Windows 系统代理 127.0.0.1:7890 会被 httpx 读取（ProxyEnable=0 但 ProxyServer 仍在），跑门禁前必须设 NO_PROXY/no_proxy，否则打本机 8080 得 502。",
+    "改了 Java 源码必须 mvn -o -q -DskipTests package 重打 jar 再启动，否则跑的是旧字节码，用例报 KeyError: 'keywords'。",
+    "第一次跑 frontend gate N4 时 vitest 崩在 tinypool（RangeError: Maximum call stack size exceeded），原因是同一时刻 mvn verify 也在跑（改 jar 会杀掉 mock Java）。停掉 Java 单独重跑即 311 全绿 —— 门禁之间要串行，不要在 mvn 跑着的时候开 vitest。"
+  ],
+  "knownLimitations": [
+    "关键词的判分质量没有端到端实测：mock provider 的答案是否命中关键词取决于模板文案，所以 J5 只钉分母（scored + unscored == 选题数），不钉 hitRate 的具体小数。real 档要真的跑一轮才知道关键词写得对不对。",
+    "候选题实验只支持 C<id> 一种写法，没有「把整个候选池一次纳入」的批量入口；导出 CSV 是为了让用户手工补词后回填，回填接口（导入 keywords）不在 N4 范围。",
+    "导出只含 question,keywords 两列，不带 type/evidence/来源消息 id；要追到具体是哪条消息点踩的，还得回候选池页面看。"
+  ]
+}

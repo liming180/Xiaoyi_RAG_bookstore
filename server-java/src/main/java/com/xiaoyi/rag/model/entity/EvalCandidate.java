@@ -29,6 +29,15 @@ public class EvalCandidate {
     @Column(name = "status", nullable = false, length = 16)
     private String status;
 
+    /**
+     * 人工补的判分关键词，语法同 {@code assets/eval/keywords.csv}。
+     *
+     * <p>NULL / 空白 = 没补。没补不影响进实验，只影响计分：{@code metrics.scored} 里不算它，{@code hitRate} 的分母也不含它 ——
+     * 没有关键词就判不出对错，硬判只会算出一个假分数。
+     */
+    @Column(name = "keywords", length = 512)
+    private String keywords;
+
     @Column(name = "created_at", nullable = false)
     private Long createdAt;
 
@@ -73,6 +82,14 @@ public class EvalCandidate {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getKeywords() {
+        return keywords;
+    }
+
+    public void setKeywords(String keywords) {
+        this.keywords = keywords;
     }
 
     public Long getCreatedAt() {

@@ -7,12 +7,15 @@ import com.xiaoyi.rag.common.exception.ApiException;
 import com.xiaoyi.rag.config.XiaoyiProperties;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.dto.RebuildRequest;
+import com.xiaoyi.rag.model.entity.EvalCandidate;
 import com.xiaoyi.rag.model.entity.Experiment;
 import com.xiaoyi.rag.model.entity.ExperimentRun;
 import com.xiaoyi.rag.model.vo.EvalCaseResultVO;
+import com.xiaoyi.rag.model.vo.EvalQuestionVO;
 import com.xiaoyi.rag.model.vo.ExperimentReportVO;
 import com.xiaoyi.rag.model.vo.ExperimentVO;
 import com.xiaoyi.rag.model.vo.IndexTaskVO;
+import com.xiaoyi.rag.repository.EvalCandidateRepository;
 import com.xiaoyi.rag.repository.ExperimentRepository;
 import com.xiaoyi.rag.repository.ExperimentRunRepository;
 import com.xiaoyi.rag.service.EvalService;
@@ -57,6 +60,7 @@ public class ExperimentServiceImpl implements ExperimentService {
     private final XiaoyiProperties properties;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
+    private final EvalCandidateRepository candidates;
     private final AtomicBoolean running = new AtomicBoolean();
 
     public ExperimentServiceImpl(
@@ -66,7 +70,8 @@ public class ExperimentServiceImpl implements ExperimentService {
             IndexService indexes,
             XiaoyiProperties properties,
             ObjectMapper mapper,
-            PlatformTransactionManager manager) {
+            PlatformTransactionManager manager,
+            EvalCandidateRepository candidates) {
         this.experiments = experiments;
         this.runs = runs;
         this.evaluations = evaluations;
@@ -74,6 +79,7 @@ public class ExperimentServiceImpl implements ExperimentService {
         this.properties = properties;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(manager);
+        this.candidates = candidates;
     }
 
     /**
@@ -113,6 +119,13 @@ public class ExperimentServiceImpl implements ExperimentService {
         if (groups.size() > MAX_GROUPS)
             throw new ApiException(
                     ErrorCode.INVALID_PARAM.getCode(), "参数矩阵最多 " + MAX_GROUPS + " 组（每组都要重建索引）");
+        // 选题在**创建时**就解析并固定下来：后台线程里再解析，题目被取消采纳后整场实验会莫名 40001。
+        // 空选题传空列表当哨兵，交给后台按「全部 13 题」展开 —— 解析题库要把异常挡在请求线程里，
+        // 而「题库为空」属于环境问题，应该落在实验行的 error 上（前端能看到原因），不是 500 回给调用方。
+        List<EvalQuestionVO> selected =
+                request.questionIds() == null || request.questionIds().isEmpty()
+                        ? List.of()
+                        : selectQuestions(userId, request.questionIds());
         running.set(true);
         try {
             Experiment experiment =
@@ -135,7 +148,8 @@ public class ExperimentServiceImpl implements ExperimentService {
             ExperimentVO initial = toVO(experiment);
             Long id = experiment.getId();
             Long owner = userId;
-            Thread.startVirtualThread(() -> execute(owner, id, groups));
+            List<EvalQuestionVO> fixed = List.copyOf(selected);
+            Thread.startVirtualThread(() -> execute(owner, id, groups, fixed));
             return initial;
         } catch (RuntimeException | Error error) {
             running.set(false);
@@ -157,12 +171,27 @@ public class ExperimentServiceImpl implements ExperimentService {
      *   <li>评测本身抛异常 → 整场 FAILED（题集为空、AI 不可用属于环境问题，继续跑没有意义）；
      *   <li>收尾恢复默认参数失败 → 整场 FAILED，error 写明「向量库未能恢复到默认参数」。
      * </ul>
+     *
+     * <p><b>计分口径</b>：候选题补了关键词才算「能判分」。没补的照样跑、照样进报告，但 {@code metrics.unscored} 记一笔且**不进 hitRate 分母**
+     * —— 分母里混进注定 false 的题， 等于让「补了关键词」这个动作把分数压低，那这个分数就没有意义。分母为 0 时 hitRate 记 0。
      */
-    private void execute(Long userId, Long id, List<Map<String, Object>> groups) {
+    private void execute(
+            Long userId, Long id, List<Map<String, Object>> groups, List<EvalQuestionVO> fixed) {
         boolean indexTouched = false;
+        int scored = 0;
+        int unscored = 0;
         try {
-            var questions = evaluations.questions();
+            // 空列表 = 创建时没选题，按全部题库题跑。放在 try 里是因为「题库读不出来」属于环境问题，
+            // 应该落到实验行的 error 上让前端看见原因，而不是在请求线程里炸成 500。
+            List<EvalQuestionVO> questions = fixed.isEmpty() ? evaluations.questions() : fixed;
             if (questions.isEmpty()) throw new IllegalStateException("评测题集为空");
+            // 可计分的题号集合：分子分母都只在这批题里算。
+            java.util.Set<String> scorable = new java.util.LinkedHashSet<>();
+            for (EvalQuestionVO q : questions) {
+                if (q.keywords() != null && !q.keywords().isBlank()) scorable.add(q.id());
+            }
+            scored = scorable.size();
+            unscored = questions.size() - scored;
             for (int index = 0; index < groups.size(); index++) {
                 if (Thread.currentThread().isInterrupted())
                     throw new IllegalStateException("实验已中断");
@@ -193,12 +222,19 @@ public class ExperimentServiceImpl implements ExperimentService {
                     if (cases.size() != questions.size())
                         throw new IllegalStateException("评测结果数量不完整");
                     elapsed = Math.max(0, (System.nanoTime() - start) / 1_000_000);
-                    long passed = cases.stream().filter(EvalCaseResultVO::ragPassed).count();
+                    // 分子与分母必须落在同一批题上：只数「可计分且通过」的题。
+                    // 用全部 cases 的通过数当分子会算出一比一以上的 hitRate —— 没关键词的题
+                    // judge() 恒 false，本该永远不通过，一旦换成别人写的 stub 就会暴露成 >1.0。
+                    long passed =
+                            cases.stream()
+                                    .filter(EvalCaseResultVO::ragPassed)
+                                    .filter(c -> scorable.contains(c.questionId()))
+                                    .count();
                     long failed =
                             cases.stream()
                                     .filter(c -> c.ragAnswer() == null || c.ragAnswer().isBlank())
                                     .count();
-                    metrics.put("hitRate", (double) passed / cases.size());
+                    metrics.put("hitRate", scored == 0 ? 0.0d : (double) passed / scored);
                     metrics.put(
                             "avgElapsedMs",
                             Math.round(
@@ -215,6 +251,9 @@ public class ExperimentServiceImpl implements ExperimentService {
                                     .orElse(0));
                     metrics.put("failed", failed);
                 }
+                // 计分口径如实上报：分母到底含几道题，读报告的人不用猜。
+                metrics.put("scored", scored);
+                metrics.put("unscored", unscored);
                 // 本组到底哪几根轴真的生效了 —— 这一栏是本任务的验收核心，不许假装。
                 metrics.put("effective", effectiveFlags());
 
@@ -254,6 +293,75 @@ public class ExperimentServiceImpl implements ExperimentService {
         } finally {
             running.set(false);
         }
+    }
+
+    /**
+     * 解析实验选题。
+     *
+     * <p>两条来源，用题号前缀区分：
+     *
+     * <ul>
+     *   <li>{@code T01}–{@code T13} → 内置题库；
+     *   <li>{@code C<候选id>} → 候选池，必须是**当前用户**且 {@code status=accepted}。
+     * </ul>
+     *
+     * 候选题的 {@code keywords} 取自 {@code eval_candidate.keywords}（可能为 null），{@code evidence} 固定填
+     * {@code "feedback"}。别人的候选与不存在的候选回同一个 40001「题目不存在」—— 和「题号写错」共用一条 消息，不给「这个 id 存在但不是你的」这种可枚举信号。
+     *
+     * <p>为什么要在创建时就解析：后台线程里再解析一遍，用户中途把候选改回 ignored，整场实验会莫名
+     * 40001；而且「这次实验考了哪几道题」应该在建实验那一刻就定下来，否则报告无法复现。
+     *
+     * @param userId 归属用户
+     * @param questionIds 请求里的题号；null / 空 = 全部 13 道题库题
+     * @return 解析后的题目列表（去重，保持请求顺序）
+     */
+    private List<EvalQuestionVO> selectQuestions(Long userId, List<String> questionIds) {
+        List<EvalQuestionVO> bank = evaluations.questions();
+        if (questionIds == null || questionIds.isEmpty()) return List.copyOf(bank);
+        List<EvalQuestionVO> selected = new ArrayList<>();
+        for (String raw : questionIds) {
+            String id = raw == null ? "" : raw.strip();
+            EvalQuestionVO question = resolveQuestion(userId, bank, id);
+            if (!selected.contains(question)) selected.add(question);
+        }
+        return List.copyOf(selected);
+    }
+
+    /** 单题号解析；解析不出来统一抛 40001「题目不存在: X」。 */
+    private EvalQuestionVO resolveQuestion(Long userId, List<EvalQuestionVO> bank, String id) {
+        if (id.startsWith("C")) {
+            return candidateQuestion(userId, id);
+        }
+        return bank.stream()
+                .filter(item -> item.id().equals(id))
+                .findFirst()
+                .orElseThrow(
+                        () -> new ApiException(ErrorCode.INVALID_PARAM.getCode(), "题目不存在: " + id));
+    }
+
+    /**
+     * 候选题解析。
+     *
+     * <p>题号格式是 {@code C<id>}，id 部分必须是正整数；解析失败、不是本人的、状态不是 accepted —— 三种情况回同一条 40001，与题库题号写错完全一致。
+     */
+    private EvalQuestionVO candidateQuestion(Long userId, String id) {
+        long candidateId;
+        try {
+            candidateId = Long.parseLong(id.substring(1));
+        } catch (NumberFormatException error) {
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "题目不存在: " + id);
+        }
+        EvalCandidate candidate =
+                candidates
+                        .findOwnedByIdAndStatus(candidateId, userId, "accepted")
+                        .orElseThrow(
+                                () ->
+                                        new ApiException(
+                                                ErrorCode.INVALID_PARAM.getCode(), "题目不存在: " + id));
+        // 候选题固定归为 out（库外）：它来自用户点👎的真实提问，本来就不在固定题库的分型里。
+        // 硬套 single/cross 会让「按题型统计」这栏凭空多出几条来源不明的单文档题。
+        return new EvalQuestionVO(
+                id, "out", candidate.getQuestion(), candidate.getKeywords(), "feedback");
     }
 
     /**

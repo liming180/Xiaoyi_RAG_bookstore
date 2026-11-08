@@ -154,7 +154,12 @@ public class FeedbackService {
                                         row.getQuestion(),
                                         row.getSource(),
                                         row.getStatus(),
-                                        row.getCreatedAt()))
+                                        row.getCreatedAt(),
+                                        // 空串归一成 null：库里理论上不会存空串（decide 会写 null），
+                                        // 但手工改过库时两者语义相同，读侧统一成一种形状。
+                                        row.getKeywords() == null || row.getKeywords().isEmpty()
+                                                ? null
+                                                : row.getKeywords()))
                 .toList();
     }
 
@@ -163,9 +168,12 @@ public class FeedbackService {
      *
      * <p>先做归属校验再取行：别人的候选与不存在的 id 都返回 40404，不给「存在但无权」这种可枚举的信号。
      *
+     * <p>{@code keywords} 只在 {@code status=accepted} 时写入：忽略的候选不会进实验，存关键词没有消费者； 而「采纳但没补关键词」是合法状态 ——
+     * 该候选能进实验，只是标 {@code scored:false} 不进 hitRate 分母。
+     *
      * @param userId 当前用户
      * @param id 候选 id（契约里是字符串）
-     * @param request 目标状态
+     * @param request 目标状态与可选关键词
      */
     @Transactional
     public void decide(Long userId, String id, CandidateDecisionRequest request) {
@@ -181,7 +189,65 @@ public class FeedbackService {
         EvalCandidate candidate =
                 candidateRepository.findById(candidateId).orElseThrow(this::candidateNotFound);
         candidate.setStatus(request.status());
+        if ("accepted".equals(request.status())) {
+            String keywords = normalizeKeywords(request.keywords());
+            // null 表示「这次没补」，保留已有的；空串表示「明确清空」，写回 null。
+            if (keywords != null) {
+                candidate.setKeywords(keywords.isEmpty() ? null : keywords);
+            }
+        }
         candidateRepository.save(candidate);
+    }
+
+    /**
+     * 已采纳候选导出为题库 CSV（`question,keywords` 两列，带 BOM）。
+     *
+     * <p>为什么导出的是「贴回 questions.csv」的形状而不是 JSON：这一列 keywords 本来就是要人补的， 补完直接进题库当固定题用，比再写一个导入接口省一整条链路。带
+     * BOM 是因为要过 Excel。
+     *
+     * @param userId 当前用户
+     * @return CSV 文本（含表头）
+     */
+    @Transactional(readOnly = true)
+    public String exportCandidates(Long userId) {
+        List<EvalCandidate> rows = candidateRepository.findOwnedByStatus(userId, "accepted");
+        StringBuilder csv = new StringBuilder("\ufeffquestion,keywords\r\n");
+        for (EvalCandidate row : rows) {
+            csv.append(quote(row.getQuestion()))
+                    .append(',')
+                    .append(quote(row.getKeywords() == null ? "" : row.getKeywords()))
+                    .append("\r\n");
+        }
+        return csv.toString();
+    }
+
+    /** CSV 字段转义：含逗号/引号/换行时必须整段加引号，内部引号翻倍。 */
+    private static String quote(String value) {
+        String text = value == null ? "" : value;
+        if (text.indexOf(',') < 0
+                && text.indexOf('"') < 0
+                && text.indexOf('\n') < 0
+                && text.indexOf('\r') < 0) {
+            return text;
+        }
+        return '"' + text.replace("\"", "\"\"") + '"';
+    }
+
+    /**
+     * 归一化人工填的关键词。
+     *
+     * @param raw 请求里的原始值
+     * @return {@code null} 表示没填（不覆盖已有值）；空串表示明确清空；其余是 trim 后的值
+     */
+    private static String normalizeKeywords(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String text = raw.strip();
+        if (text.length() > 512) {
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "keywords 最多 512 字符");
+        }
+        return text;
     }
 
     private ApiException messageNotFound() {

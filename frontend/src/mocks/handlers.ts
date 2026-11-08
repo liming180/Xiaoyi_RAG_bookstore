@@ -507,12 +507,46 @@ const listCandidates = http.get(`${BASE}/eval/candidates`, () => ok(getState().c
 
 const decideCandidate = http.post(`${BASE}/eval/candidates/:id/decision`, async ({ params, request }) => {
   const id = String(params.id);
-  const body = (await request.json().catch(() => ({}))) as { status?: 'accepted' | 'ignored' };
+  const body = (await request.json().catch(() => ({}))) as {
+    status?: 'accepted' | 'ignored';
+    keywords?: string;
+  };
   const st = getState();
   const idx = st.candidates.findIndex((c) => c.id === id);
   if (idx < 0) return fail(40404, '候选不存在', 404);
-  st.candidates[idx] = { ...st.candidates[idx]!, status: body.status ?? 'accepted' };
+  const status = body.status ?? 'accepted';
+  /**
+   * N4：关键词只在 accepted 时写入，且「不带」与「传空串」语义不同 ——
+   * 不带 = 没动过这个字段（保留原值），空串 = 用户清空了输入框（按没补处理）。
+   * 这里如实模拟后端，否则前端的「补完再改状态」这条路径在 mock 档永远测不出来。
+   */
+  const next = { ...st.candidates[idx]!, status };
+  if (status === 'accepted' && body.keywords !== undefined) {
+    next.keywords = body.keywords.trim();
+  }
+  st.candidates[idx] = next;
   return ok(null);
+});
+
+/**
+ * 已采纳候选导出为题库 CSV。
+ *
+ * 必须回真的 `text/csv`（不是信封）：前端用 `responseType: 'blob'` 接，Mock 回 JSON 时
+ * 拿到的会是「包装成 Blob 的 JSON 文本」，`downloadBlob` 照样能存盘，测试却看不出错 ——
+ * 所以这里连 BOM 与转义一起照抄后端实现。
+ */
+const exportCandidates = http.get(`${BASE}/eval/candidates/export`, () => {
+  const rows = getState().candidates.filter((c) => c.status === 'accepted');
+  const quote = (value: string): string =>
+    /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const lines = ['question,keywords'];
+  for (const row of rows) {
+    lines.push(`${quote(row.question)},${quote(row.keywords ?? '')}`);
+  }
+  return new HttpResponse(`\uFEFF${lines.join('\r\n')}\r\n`, {
+    status: 200,
+    headers: { 'Content-Type': 'text/csv;charset=UTF-8' },
+  });
 });
 
 const createExperiment = http.post(`${BASE}/eval/experiments`, async ({ request }) => {
@@ -574,6 +608,7 @@ const submitFeedback = http.post(`${BASE}/messages/:id/feedback`, async ({ param
       source: 'feedback',
       status: 'pending',
       createdAt: now(),
+      keywords: null,
     });
   }
   return ok(null);
@@ -616,6 +651,7 @@ export const handlers = [
   fetchRun,
   listCandidates,
   decideCandidate,
+  exportCandidates,
   createExperiment,
   fetchExperiment,
   fetchExperimentReport,

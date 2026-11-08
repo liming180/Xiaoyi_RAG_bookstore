@@ -2,8 +2,8 @@
 
 > 对应《实验一：RAG 个人知识库助手实验指导书》（广东东软学院，设计性实验，6 学时）。
 > 本仓库是该实验的**完整可运行实现**：前端 `frontend/`（Vue 3 + Vite 5 + TypeScript，已落地）；
-> 后端 v2 为 **Java 业务网关（`server-java/`）+ Python AI 服务（`server-ai/`）**：J0–J4 与 A1–A3 全部完成，套餐一亮点包的 N1–N6 已完成 N1/N2/N3。
-> **最后核对**：2026-11-08（N3 全局摘要卡落地：A2-rag 32 项 / J4 建库 30 项 / Java 76 项 / 前端 310 项全绿；N1 参数实验、N2 追问推荐见各自 gate 报告）
+> 后端 v2 为 **Java 业务网关（`server-java/`）+ Python AI 服务（`server-ai/`）**：J0–J4 与 A1–A3 全部完成，套餐一亮点包的 N1–N6 已完成 N1/N2/N3/N4。
+> **最后核对**：2026-11-09（N4 反馈闭环接通：J5-eval 41 项 / Java 84 项 / 前端 311 项全绿；N1 参数实验、N2 追问推荐、N3 全局摘要卡见各自 gate 报告）
 
 ---
 
@@ -93,7 +93,7 @@ docs/
 | [06_后端施工单.md](03-架构评审/06_后端施工单.md) | **诊断转施工**：先定单用户/多用户，再三波次推进；第一波含可复制施工单与四项验收 |
 | [07_前后端契约差异清单.md](03-架构评审/07_前后端契约差异清单.md) | **P0–P8 契约适配的落地记录**：8 个维度的旧/新行为对照 + A–G 验收结果 + 12 条验收期间修掉的真实缺陷 |
 | [03_首轮评审结论.md](03-架构评审/03_首轮评审结论.md) | 实测结论 **14/24 分**，3 个 P0（资料越权、后门 token、Python 全局状态）均带行号 |
-| [snapshot/架构快照.md](03-架构评审/snapshot/架构快照.md) | 机器生成，**不要手改**；288 行覆盖三端规模/端点/依赖/测试/反模式 |
+| [snapshot/架构快照.md](03-架构评审/snapshot/架构快照.md) | 机器生成，**不要手改**；290 行覆盖三端规模/端点/依赖/测试/反模式 |
 | [evidence/index.md](03-架构评审/evidence/index.md) | **门禁报告归档**：24 份 JSON（H0–H4、J0–J4、P7/P8、A2/A3、四档对照），含大小、结论与 SHA256；由 `tools/archive_evidence.py` 生成，`test-artifacts/` 本身被 gitignore |
 | `tools/arch_snapshot.py` | 快照生成器，零依赖，`python tools/arch_snapshot.py` 直接跑 |
 
@@ -129,7 +129,7 @@ docs/
 
 ```powershell
 cd frontend; npm install; npm run dev; cd ..   # mock 模式 → http://127.0.0.1:5173
-cd frontend; npm run test; cd ..               # 310 项前端测试（25 个 spec）
+cd frontend; npm run test; cd ..               # 311 项前端测试（25 个 spec）
 cd frontend; npm run gate -- P6 --build; cd .. # 四道门禁：lint + typecheck + test + build
 cd frontend; npm run smoke; cd ..              # 7 项浏览器冒烟
 cd frontend; npm run regress; cd ..            # 10 场景 CDP 回归
@@ -346,19 +346,20 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 | 前端文件 | **84 个** ts/vue/css（`frontend/src`）+ 25 个 spec |
 | API 契约 | v2 **29 条对外 + 8 条内部**（`02-重构设计/00_项目架构规格.md` §7.3/§7.4）；v1 的 24 条见归档 B05 |
 | 建库（180/30） | **15 片段**（01=2 02=2 03=2 04=3 05=3 06=3）——v1 实测值；v2 实测 6 篇语料 = 16 片段（含标题继承后的边界差异） |
-| 前端测试 | **310/310 通过**（25 个 spec） |
+| 前端测试 | **311/311 通过**（25 个 spec） |
 | 前端门禁 | **10 份阶段报告全 pass**（P1→P6，含 build） |
 | 批量对照 | 查资料 **10/10** · 不查资料 **1/10**（v1 mock 数据） |
 | 浏览器实测 | 冒烟 7 项 + CDP 回归 10 场景全 PASS，**21 张截图** |
 | 构建产物 | `vendor-ui 798 kB (gzip 252)` + `vendor 189 (68)` + `vendor-vue 114 (44)` + 各页面 chunk |
 | 后端 v1 | **已删除**（14 文件 / 1921 行），归档 `.snapshots/_archive/v1-backend-removed-20261101` |
-| 后端 v2（Java） | **H1–H4 + P0–P8 + A2/A3 + N1–N3 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、115 个主类 / 10873 行、14 张表 Flyway V1–V8、29 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **76 passed** |
+| 后端 v2（Java） | **H1–H4 + P0–P8 + A2/A3 + N1–N4 已完成**：`server-java/` Spring Boot 3.2.10 / Java 21、115 个主类 / 11161 行、15 张表 Flyway V1–V9、29 条对外路由统一信封、会话/消息/资料真落库、SSE 五类事件 + 检索轨迹、串行建库 + `@Scheduled` 五阶段推进。`mvn verify` **84 passed** |
 | 后端 v2（Python） | **A1 + A2 + A3 + N1–N3 已完成**：`server-ai/` 27 个文件 / 3671 行，含切分（标题继承 + 边界回退）、嵌入（OpenAI 兼容 + 分批重试）、向量库（Milvus / 内存双实现）、检索管线、BM25 倒排 + RRF 融合 + 可降级重排 + 查询改写、防幻觉提示、流式 provider、追问推荐、全局摘要卡。`test/A1-ai-skeleton` **24 passed**、`test/A2-rag` **32 passed**、`test/A3-hybrid` **29 passed** |
 | 真实 RAG 链路 | 智谱 `embedding-3`（2048 维）+ Milvus 3.0.0：建库 8 片段、top-3 引用、跨用户 0 命中、SSE 回答带 `[1]` 标注，探针 PASS（`docs/03-架构评审/evidence/backend-gate-A2.json`） |
 | 混合检索（A3） | 容器栈 `RETRIEVAL_MODE=hybrid`：SSE 阶段序列 `rewriting → retrieving → reranking → generating`，3 条引用全部 `stage=rerank`，跨用户 0 条（`docs/03-架构评审/evidence/backend-gate-A3.json`）。四档对照 6 问 6 语料 k=3：`dense` top-1 6/6 MRR 1.0000、`bm25` 3/6 0.7222、`rrf` 5/6 0.9167、`hybrid` 5/6 0.9167 —— **本批语料上 dense 已满分，混合检索没超过它**，价值在向量质量不稳时仍能到 5/6 |
 | 参数实验（E3 / N1） | 四根轴从装饰变成真执行：每组先按本组 `chunkSize`/`overlap` 重建索引再评测、跑完恢复 180/30、实验期间 `POST /index/rebuild` 回 40902、组数上限 8、`metrics.effective` 如实标 `summary=false`。`test/J5-eval` **29 passed**、`test/A3-hybrid` **29 passed**、Java **71 passed**、前端 **309 passed**（`docs/03-架构评审/evidence/backend-gate-N1.json`） |
 | 追问推荐（B1 / N2） | 从硬编码一句变成真生成 + 落库回放：`done.suggestions` 1–3 条随问题变化、刷新后 `GET /messages` 仍带 chips、direct 模式给空数组、生成失败（超时/异常/脏 JSON）一律降级不抛。`test/A1-ai-skeleton` **24 passed**、`test/J3-sse` **38 passed**、Java **74 passed**、前端 **310 passed**（`docs/03-架构评审/evidence/backend-gate-N2.json`） |
 | 全局摘要卡（A5 / N3） | 建库的 `summarizing` 从空转变成真产出：`D00-C001` 统计卡（全库共 N 份资料）+ `D00-C002` 规则卡（借阅条款），`doc_id` 用哨兵 `__summary__`；只在全局问题（一共/总共/资料库/汇总…）时兜底替换末位，具体问题不塞卡；`gen_summary=false` 跳过生成、生成失败降级为空且任务仍 SUCCEEDED。`test/A2-rag` **32 passed**（新增 11 条）、`test/J4-ingest` **30 passed**、Java **76 passed**、前端 **310 passed**（`docs/03-架构评审/evidence/backend-gate-N3.json`） |
+| 反馈闭环（C1 / N4） | 候选池从只进不出变成能进实验：`eval_candidate` 加 `keywords`（V9），采纳时可补判分关键词，**补了就计分、没补就标 `unscored` 不进分母**；实验选题支持 `C<候选id>` 与题库题号混选（pending/ignored/别人的一律 40001，与题号写错同一条消息）；`GET /eval/candidates/export` 回真 `text/csv`（BOM + `question,keywords` + 引号转义，只含 accepted）。`test/J5-eval` **41 passed**（新增 12 条）、Java **84 passed**、前端 **311 passed**（`docs/03-架构评审/evidence/backend-gate-N4.json`） |
 | 根门禁 | 真实档 `J0 J1 J2 J4 J6 J7 A1 A2 A3` **301 passed / 1 skipped**，9 阶段合计 217.22s；mock 档 `J3 J5` **55 passed**，合计 82.45s。两轮由 `test/run_all.py` 合并成一份 `backend-gate-all.json`，覆盖 11/11 阶段（`partial=false`），每条 gate 带 `ranAt` 标明属于哪一轮 |
 
 ## 六、目录与文件对照（代码在哪）
@@ -367,7 +368,7 @@ frontend/src/api/modules/*.ts     → 前端跟着契约改
 D:\VM1\Xiaoyi_RAG_bookstore\
 ├─ frontend\       前端（Vue 3 + Vite + TypeScript，P1–P6 全部完成）
 │  ├─ src\         main.ts / App.vue / app（布局+路由）/ api / features / stores / utils / styles
-│  ├─ test\        25 个 vitest spec（310 项）
+│  ├─ test\        25 个 vitest spec（311 项）
 │  ├─ scripts\     gate.mjs（四道门禁）/ smoke.mjs / regress.mjs（CDP 10 场景）/ snapshot.mjs / cdp.mjs
 │  ├─ dist\        Vite 构建产物（Java 网关或 nginx 托管这个目录）
 │  └─ README.md    启动方式、mock 与真实后端切换、三条硬约束
@@ -375,7 +376,7 @@ D:\VM1\Xiaoyi_RAG_bookstore\
 │  ├─ data\        6 份教学资料 .md（01–06，06 未核实）
 │  └─ eval\        questions.csv（13 道测试题 T01–T13）+ keywords.csv（判分关键词）
 ├─ docs\           本文档体系（含 `api/` 四份契约）
-├─ server-java\    Java 网关（Spring Boot 3.2.10 / Java 21，J0–J4 + N1–N3 已完成）
+├─ server-java\    Java 网关（Spring Boot 3.2.10 / Java 21，J0–J4 + N1–N4 已完成）
 ├─ test\           后端门禁测试（pytest，J0→A3 十阶段）
 ├─ .snapshots\     阶段快照与已删资产的归档（web/、v1 前端文档、v1 后端源码，不进版本库）
 └─ .gitattributes  .gitignore
