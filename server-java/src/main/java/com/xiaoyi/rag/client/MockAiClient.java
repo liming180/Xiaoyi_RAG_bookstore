@@ -347,7 +347,14 @@ public class MockAiClient implements AiServiceClient {
         }
 
         String taskId = "mock-ingest-" + ingestSequence.incrementAndGet();
-        MockIngest ingest = new MockIngest(taskId, userId, documents, chunkSize, overlap);
+        MockIngest ingest =
+                new MockIngest(
+                        taskId,
+                        userId,
+                        documents,
+                        chunkSize,
+                        overlap,
+                        request.genSummary() == null || request.genSummary());
         ingests.put(taskId, ingest);
         if (submissionKey != null && !submissionKey.isBlank()) {
             submissionIndex.putIfAbsent(submissionIndexKey(userId, submissionKey), taskId);
@@ -512,6 +519,9 @@ public class MockAiClient implements AiServiceClient {
 
         private final boolean pollFail;
 
+        /** N3：本次建库是否生成摘要卡。false 时终态片段里没有 D00 系列。 */
+        private final boolean genSummary;
+
         private final AtomicInteger step = new AtomicInteger();
 
         private volatile Long finishedAt;
@@ -523,12 +533,14 @@ public class MockAiClient implements AiServiceClient {
                 Long userId,
                 List<AiParseDocumentItem> documents,
                 int chunkSize,
-                int overlap) {
+                int overlap,
+                boolean genSummary) {
             this.taskId = taskId;
             this.userId = userId;
             this.documents = documents;
             this.chunkSize = chunkSize;
             this.overlap = overlap;
+            this.genSummary = genSummary;
             this.pollFail =
                     documents.stream()
                             .anyMatch(
@@ -610,9 +622,61 @@ public class MockAiClient implements AiServiceClient {
                         }
                     }
                 }
+                // N3：摘要卡与普通片段同一批回传（Java 靠 data.chunks 落自己的 chunk 表）。
+                built.addAll(summaryCards());
                 cached = built;
                 return built;
             }
+        }
+
+        /**
+         * 摘要卡（N3）：统计卡 + 规则卡，编号固定 `D00-C001` / `D00-C002`。
+         *
+         * <p>与 Python 侧 `summarizer.mock_cards()` 的语义一致：统计卡说「共 N 份资料」， 规则卡挑含数字的条款句。这里不追求文字一致 ——
+         * mock 的两端本来就各自造文档， 一致的是**形状与编号约定**（`D00-*`、`doc_id=__summary__`、`kind` 取值）。
+         */
+        private List<AiChunk> summaryCards() {
+            if (!genSummary || documents.isEmpty()) {
+                return List.of();
+            }
+            List<String> titles = new ArrayList<>(documents.size());
+            for (AiParseDocumentItem doc : documents) {
+                titles.add(doc.title() == null ? doc.name() : doc.title());
+            }
+            List<AiChunk> cards = new ArrayList<>(2);
+            cards.add(
+                    new AiChunk(
+                            "D00-C001",
+                            "__summary__",
+                            "全库摘要",
+                            "全库概览",
+                            "全库共 " + documents.size() + " 份资料：" + String.join("、", titles) + "。",
+                            0,
+                            0,
+                            "summary",
+                            true));
+            // 规则卡：挑第一条含数字的正文句子，形状与真实实现一致。
+            for (AiParseDocumentItem doc : documents) {
+                String text = doc.text() == null ? "" : doc.text();
+                for (String raw : text.split("[。；;\\n]+")) {
+                    String sentence = raw.strip();
+                    if (!sentence.isEmpty() && sentence.chars().anyMatch(Character::isDigit)) {
+                        cards.add(
+                                new AiChunk(
+                                        "D00-C002",
+                                        "__summary__",
+                                        "全库摘要",
+                                        "借阅与资格规则",
+                                        sentence + "。",
+                                        0,
+                                        sentence.length() + 1,
+                                        "rule",
+                                        true));
+                        return cards;
+                    }
+                }
+            }
+            return cards;
         }
     }
 }

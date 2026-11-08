@@ -24,6 +24,7 @@ import com.xiaoyi.rag.model.dto.RebuildRequest;
 import com.xiaoyi.rag.model.entity.Chunk;
 import com.xiaoyi.rag.model.entity.Document;
 import com.xiaoyi.rag.model.entity.IndexTask;
+import com.xiaoyi.rag.model.vo.ChunkItemVO;
 import com.xiaoyi.rag.model.vo.IndexTaskVO;
 import com.xiaoyi.rag.repository.ChunkRepository;
 import com.xiaoyi.rag.repository.DocumentRepository;
@@ -297,6 +298,86 @@ class IndexServiceImplTest {
     }
 
     @Test
+    @DisplayName("N3：摘要卡的 doc_id 是哨兵字符串，落库必须翻成 0 而不是被跳过")
+    void summaryCardKeepsSentinelDocId() {
+        IndexTask task = task(9L, OWNER, IndexTask.STATUS_RUNNING);
+        task.setExternalTaskId("py-task-sum");
+        task.setSnapshotJson("[]");
+        when(tasks.findByStatusInOrderByCreatedAtAsc(any())).thenReturn(List.of(task));
+        when(ai.getIngestTask(OWNER, "py-task-sum"))
+                .thenReturn(
+                        new AiIngestTask(
+                                "py-task-sum",
+                                "SUCCEEDED",
+                                "done",
+                                100,
+                                1,
+                                2,
+                                null,
+                                List.of(chunk("7"), summaryChunk("D00-C001"))));
+
+        service.pollOnce();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Chunk>> saved = ArgumentCaptor.forClass(List.class);
+        verify(chunks).saveAll(saved.capture());
+        // 关键：摘要卡要在库里存下来。旧实现用 parseId("__summary__") 得 null 后直接
+        // `continue`，结果是「任务说 chunkCount=2、片段列表里只有 1 条」，极难查。
+        assertThat(saved.getValue()).hasSize(2);
+        Chunk card =
+                saved.getValue().stream()
+                        .filter(row -> Chunk.KIND_SUMMARY.equals(row.getKind()))
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("摘要卡没有落库：" + saved.getValue()));
+        assertThat(card.getDocId()).isEqualTo(Chunk.SUMMARY_DOC_ID);
+        assertThat(card.getDocTitle()).isEqualTo("全库摘要");
+        assertThat(card.getChunkId()).isEqualTo("D00-C001");
+    }
+
+    @Test
+    @DisplayName("N3：listChunks 把 docId=0 翻回 __summary__，并支持按它过滤")
+    void listChunksRestoresSummaryDocLabel() {
+        Chunk card = new Chunk();
+        card.setChunkId("D00-C001");
+        card.setDocId(Chunk.SUMMARY_DOC_ID);
+        card.setDocTitle("全库摘要");
+        card.setHeadingPath("全库概览");
+        card.setText("全库共 6 份资料。");
+        card.setStart(0);
+        card.setEnd(12);
+        card.setKind(Chunk.KIND_SUMMARY);
+        card.setVerified(true);
+        card.setSeq(9);
+        Chunk normal = new Chunk();
+        normal.setChunkId("D01-C001");
+        normal.setDocId(7L);
+        normal.setDocTitle("笔记");
+        normal.setHeadingPath("");
+        normal.setText("正文");
+        normal.setStart(0);
+        normal.setEnd(2);
+        normal.setKind(Chunk.KIND_CHUNK);
+        normal.setVerified(true);
+        normal.setSeq(0);
+        when(chunks.findByUserIdOrderBySeqAscIdAsc(OWNER)).thenReturn(List.of(normal, card));
+
+        List<ChunkItemVO> all = service.listChunks(OWNER, null, null, null);
+        assertThat(all).hasSize(2);
+        // 契约里 ChunkItem.docId 是 EntityId（字符串或正整数），给 "0" 会让前端把它
+        // 当成一份真实资料去拼 URL。
+        assertThat(all.get(1).docId()).isEqualTo(Chunk.SUMMARY_DOC_LABEL);
+
+        List<ChunkItemVO> onlyCards =
+                service.listChunks(OWNER, Chunk.SUMMARY_DOC_LABEL, null, null);
+        assertThat(onlyCards).hasSize(1);
+        assertThat(onlyCards.get(0).kind()).isEqualTo(Chunk.KIND_SUMMARY);
+
+        // 解析不出来的 docId 回空，而不是「忽略过滤、回全部」——
+        // 后者会让前端以为过滤生效了，只是这个 id 碰巧有数据。
+        assertThat(service.listChunks(OWNER, "abc", null, null)).isEmpty();
+    }
+
+    @Test
     @DisplayName("失败任务只标脏本人资料，不删上一代片段")
     void failedTaskKeepsPreviousGeneration() {
         IndexTask task = task(9L, OWNER, IndexTask.STATUS_RUNNING);
@@ -439,5 +520,19 @@ class IndexServiceImplTest {
     private static AiChunk chunk(String docId) {
         return new AiChunk(
                 "D" + docId + "-C001", docId, "笔记", "", "正文", 0, 2, Chunk.KIND_CHUNK, true);
+    }
+
+    /** 摘要卡：doc_id 是 Python 侧的哨兵字符串，不是数字。 */
+    private static AiChunk summaryChunk(String chunkId) {
+        return new AiChunk(
+                chunkId,
+                Chunk.SUMMARY_DOC_LABEL,
+                "全库摘要",
+                "全库概览",
+                "全库共 1 份资料。",
+                0,
+                11,
+                Chunk.KIND_SUMMARY,
+                true);
     }
 }

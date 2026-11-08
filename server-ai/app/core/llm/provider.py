@@ -25,6 +25,10 @@ MOCK_PREFIX = "这是针对"
 class LlmProvider(ABC):
     """生成接口。"""
 
+    #: 是否为 mock provider。摘要卡（N3）用它决定「直接给确定性卡片」还是「真调模型」：
+    #: 让 mock 去拼一份假 JSON 再解析一遍没有意义，而 real 档绝不能拿确定性卡片冒充模型输出。
+    is_mock: bool = False
+
     @abstractmethod
     async def answer(
         self,
@@ -55,9 +59,27 @@ class LlmProvider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} 未实现 complete()")
 
+    def complete_sync(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.2,
+        max_tokens: int = 600,
+    ) -> str:
+        """同步版本的一次性补全，供建库后台任务使用（N3 摘要卡）。
+
+        默认实现把异步版本跑进一个新事件循环 —— 只在**没有正在运行的事件循环**时安全。
+        建库跑在 FastAPI 的 BackgroundTasks 里（同步函数、线程池线程），满足这个前提；
+        请求处理路径上要用异步版本，不要用这个。
+        """
+        import asyncio
+
+        return asyncio.run(self.complete(messages, temperature, max_tokens))
+
 
 class MockProvider(LlmProvider):
     """离线模板回答：不联网、不随机，门禁断言可以写死。"""
+
+    is_mock = True
 
     async def answer(
         self,

@@ -35,6 +35,20 @@ public class Chunk {
     public static final String KIND_SUMMARY = "summary";
     public static final String KIND_RULE = "rule";
 
+    /**
+     * 摘要卡的 `doc_id` 哨兵值（N3）。
+     *
+     * <p>摘要卡属于「全库」而不是任何一份资料，Python 侧给的是 {@code "__summary__"}；但 `chunk.doc_id` 是 `BIGINT NOT
+     * NULL`，存不了字符串。折中：库里统一存 0，对外输出时 再翻回 `"__summary__"`（见 `IndexServiceImpl.listChunks`）。
+     *
+     * <p>为什么不用 `NULL`：列是 NOT NULL，且「0 = 全库摘要」是个确定语义，比 NULL 更好查。 为什么不用一个真的资料
+     * id：那会让摘要卡在「删除该资料」时被连带清掉。
+     */
+    public static final long SUMMARY_DOC_ID = 0L;
+
+    /** 摘要卡对外暴露的 docId 字面量。 */
+    public static final String SUMMARY_DOC_LABEL = "__summary__";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

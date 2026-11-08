@@ -21,4 +21,20 @@ public record AiParseRequest(
         Integer chunkSize,
         Integer overlap,
         String submissionKey,
-        String generation) {}
+        String generation,
+        Boolean genSummary) {
+
+    /**
+     * 兼容构造器：不传 {@code genSummary} 时按契约默认值 true 处理。
+     *
+     * <p>留这个是为了让「不关心摘要卡」的调用点（测试、历史代码）不用改；线上唯一 调用点 `IndexServiceImpl` 显式传 true。
+     */
+    public AiParseRequest(
+            List<AiParseDocumentItem> documents,
+            Integer chunkSize,
+            Integer overlap,
+            String submissionKey,
+            String generation) {
+        this(documents, chunkSize, overlap, submissionKey, generation, true);
+    }
+}

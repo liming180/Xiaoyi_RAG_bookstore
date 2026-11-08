@@ -85,15 +85,31 @@ class Bm25Index:
 
 
 class Bm25Cache:
-    """按 (user_id, task_id) 缓存索引；任务内容变化时以 revision 失效。"""
+    """按 (user_id, task_id, scope) 缓存索引；内容条数变化时失效。
+
+    `scope` 是这次建索引用的**子集标识**（`kind` 与 `doc_ids` 拼出来的串）。不带上它
+    会出真错：`kind=summary` 与 `kind=rule` 的语料条数常常相同（都是 1 条），
+    revision 相等就让缓存把摘要卡的倒排表当成规则卡的返回 —— 实测表现为
+    「问规则，引用里混进统计卡」，而两次查询在代码里看起来毫无关联。
+    """
 
     def __init__(self) -> None:
-        self._entries: dict[tuple[int, str], tuple[int, Bm25Index]] = {}
+        self._entries: dict[tuple[int, str, str], tuple[int, Bm25Index]] = {}
         self._lock = threading.Lock()
         self._configured = False
 
-    def build(self, user_id: int, task_id: str, rows: Sequence[dict[str, Any]]) -> Bm25Index:
-        key = (int(user_id), str(task_id))
+    def build(
+        self, user_id: int, task_id: str, rows: Sequence[dict[str, Any]], scope: str = "",
+    ) -> Bm25Index:
+        """建/取倒排索引。
+
+        @param user_id 归属用户
+        @param task_id 建库任务号
+        @param rows 本次参与倒排的切片（已按 kind / doc_ids 过滤）
+        @param scope 子集标识，见类注释
+        @return 倒排索引
+        """
+        key = (int(user_id), str(task_id), str(scope))
         revision = len(rows)
         with self._lock:
             if not self._configured:

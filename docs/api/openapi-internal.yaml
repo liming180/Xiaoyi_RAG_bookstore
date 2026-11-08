@@ -971,6 +971,29 @@ components:
           description: '语料集合摘要'
         reason:
           type: string
+        summary:
+          description: |
+            全局摘要卡（N3）的生成结果。**`null` 表示本次建库降级为「无摘要卡」**
+            （LLM 失败或 `gen_summary=false`），不是「还没算」。
+          oneOf:
+            - type: object
+              required: [model, cards, kinds]
+              additionalProperties: false
+              properties:
+                model:
+                  type: string
+                  description: '产出卡片所用的模型名'
+                cards:
+                  type: integer
+                  minimum: 0
+                  description: '卡片条数（统计卡 + 规则卡，最多 2）'
+                kinds:
+                  type: array
+                  items:
+                    type: string
+                    enum: [summary, rule]
+                  description: '实际生成的卡片类型'
+            - type: 'null'
 
     # ------------------------------------------------------------ 评测
 

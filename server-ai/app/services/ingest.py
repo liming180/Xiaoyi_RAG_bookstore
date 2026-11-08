@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from ..config import get_settings
-from ..core.rag import pipeline, prompt
+from ..core.rag import pipeline, prompt, summarizer
 from ..core.rag.embedder import Embedder, embedder_from_settings
 from ..core.rag.fusion import reciprocal_rank_fusion
 from ..core.rag.reranker import QueryRewriter, Reranker, reranker_from_settings
@@ -46,6 +46,7 @@ class _Runtime:
         self._embedder: Embedder | None = None
         self._reranker: Reranker | None = None
         self._rewriter: QueryRewriter | None = None
+        self._provider: Any = None
         self._dim = 0
 
     def store(self) -> VectorStore:
@@ -68,12 +69,25 @@ class _Runtime:
             self._rewriter = QueryRewriter(get_settings())
         return self._rewriter
 
+    def provider(self):
+        """建库阶段用的 LLM provider（摘要卡生成）。
+
+        与 chat 链路用的是同一套 `provider_from_settings`，但**单独缓存**：建库在
+        后台线程里跑，每次重建都新起一个 provider 会把连接池反复丢弃。
+        """
+        if self._provider is None:
+            from ..core.llm.provider import provider_from_settings
+
+            self._provider = provider_from_settings(get_settings())
+        return self._provider
+
     def reset(self) -> None:
         """测试切换 settings 时清空缓存。"""
         self._store = None
         self._embedder = None
         self._reranker = None
         self._rewriter = None
+        self._provider = None
         self._dim = 0
         bm25_cache.clear()
 
@@ -158,8 +172,18 @@ def _embed_and_store(
     user_id: int,
     task_id: str,
     rows: list[dict[str, Any]],
+    *,
+    keep_existing: bool = False,
 ) -> int:
-    """把切片向量化并写入向量库；返回写入条数。"""
+    """把切片向量化并写入向量库；返回写入条数。
+
+    @param user_id 归属用户
+    @param task_id 建库任务号
+    @param rows 切片行（已带 chunk_id / excerpt 等字段）
+    @param keep_existing True 时不清空本任务已有切片 —— 摘要卡是**追加**写入：
+        普通片段刚写进同一个 task 分区，清一次会把整库抹掉，建库直接变成只有两张卡
+    @return 写入条数
+    """
     if not rows:
         return 0
     embedder = runtime.embedder()
@@ -186,8 +210,9 @@ def _embed_and_store(
             owner[chunk] = str(row["doc_id"])
     if duplicated:
         raise ValueError("同一批切片出现重复 chunk_id：" + "；".join(sorted(set(duplicated))[:5]))
-    # 先删同任务旧行，保证重放同一 submission_key 不会残留旧切片。
-    store.delete_task(user_id, task_id)
+    if not keep_existing:
+        # 先删同任务旧行，保证重放同一 submission_key 不会残留旧切片。
+        store.delete_task(user_id, task_id)
     return store.upsert(user_id, task_id, payload)
 
 
@@ -231,6 +256,12 @@ def run_ingest(user_id: int, task_id: str, req: ParseRequest) -> None:
         _pause()
 
         state.update_task(user_id, task_id, stage="summarizing", progress=90, chunk_count=stored)
+        # N3：summarizing 阶段从「空转」变成真生成。失败**不改变任务终态** ——
+        # 摘要卡是增强，不是建库的前提；降级为「无摘要卡」，任务照常 SUCCEEDED。
+        cards = _summarize(user_id, task_id, req)
+        stored += len(cards)
+        if cards:
+            state.replace_chunks(user_id, task_id, summarizer.SUMMARY_DOC_ID, cards)
         _pause()
         state.update_task(
             user_id,
@@ -251,6 +282,38 @@ def run_ingest(user_id: int, task_id: str, req: ParseRequest) -> None:
             error=f"解析任务失败：{exc}",
             finished_at=int(time.time()),
         )
+
+
+def _summarize(user_id: int, task_id: str, req: ParseRequest) -> list[dict[str, Any]]:
+    """生成并写入摘要卡；返回写入的卡片行（失败返回空列表）。
+
+    <p>为什么单独抽出来：它是唯一一条「失败也算成功」的路径，混在主流程里很难看出
+    到底哪一步在容错。抽出来之后，`run_ingest` 里那一行读起来就是「这里不抛异常」。
+
+    @param user_id 归属用户
+    @param task_id 本次建库任务（摘要卡与普通片段同分区）
+    @param req 解析请求（取语料与 gen_summary 开关）
+    @return 写入的卡片行；未生成/生成失败时为空列表
+    """
+    if not req.gen_summary:
+        # 开关关掉时**连 LLM 都不调**：门禁要能断言「关掉后一个摘要卡都没有」，
+        # 而「调了但丢弃」会让这条断言依赖运气。
+        logger.info("用户 %s 的建库任务跳过了摘要卡生成（gen_summary=false）", user_id)
+        return []
+    try:
+        cards = summarizer.generate(runtime.provider(), req.documents)
+    except Exception as exc:  # noqa: BLE001 - 摘要失败绝不能让建库失败
+        logger.warning("摘要卡生成失败，本次建库降级为无摘要卡：%s", exc)
+        return []
+    if not cards:
+        logger.info("用户 %s 的建库任务没有产出摘要卡（语料为空或模型输出不合格）", user_id)
+        return []
+    rows = summarizer.to_chunk_rows(user_id, task_id, cards)
+    written = _embed_and_store(user_id, task_id, rows, keep_existing=True)
+    if written != len(rows):
+        logger.warning("摘要卡写入条数不符：期望 %s 实际 %s", len(rows), written)
+    return rows
+
 
 
 def _latest_task(user_id: int) -> str | None:
@@ -277,13 +340,97 @@ def _fallback_rows(user_id: int, req: RetrieveRequest) -> list[dict[str, Any]]:
 
 
 def _scoped_rows(user_id: int, task_id: str, req: RetrieveRequest) -> list[dict[str, Any]]:
-    """BM25 的语料范围与向量路完全一致；先限定用户，再建倒排。"""
+    """BM25 的语料范围与向量路完全一致；先限定用户，再建倒排。
+
+    @param user_id 归属用户
+    @param task_id 建库任务号
+    @param req 检索请求
+    @return 倒排可用的切片行
+    """
     rows = state.list_chunks(user_id, task_id)
     allowed = set(req.doc_ids) if req.doc_ids else None
+    effective_kind = req.kind or "chunk"
     return [
         row for row in rows
-        if (allowed is None or row["doc_id"] in allowed) and (not req.kind or row["kind"] == req.kind)
+        if (allowed is None or row["doc_id"] in allowed) and row["kind"] == effective_kind
     ]
+
+
+def _best_card(
+    user_id: int, task_id: str, vector: list[float], req: RetrieveRequest,
+) -> dict[str, Any] | None:
+    """取一张最优摘要卡，供 top-k 兜底使用（N3）。
+
+    为什么摘要卡不参与自由竞争
+    --------------------------
+    摘要卡是「全库概览」，向量与任何具体问题都不算特别近，但也不算远 —— 让它在同一个
+    top-k 里自由竞争，结果是它**随机地**挤掉真实片段（实测 3 条引用里有 2 条是卡片，
+    用户问「借几本」，拿到的却是「全库共 6 份资料」）。所以正常召回只看 `kind=chunk`，
+    摘要卡只在兜底路径上补末位。
+
+    @param user_id 归属用户
+    @param task_id 任务号
+    @param vector 查询向量
+    @param req 检索请求
+    @return 最优摘要卡，没有则 None
+    """
+    if req.doc_ids or req.kind:
+        # 用户显式限定了资料范围或类型时不做兜底：那不是「问全局」，补一张库里所有资料的
+        # 概览卡会答非所问。
+        return None
+    store = runtime.store()
+    # 统计卡优先于规则卡：问「一共多少」比问「谁有资格」更常见，且规则卡正文更长、
+    # 塞进 3 条引用的上下文里更挤。
+    for kind in ("summary", "rule"):
+        hits = store.search(
+            user_id=user_id, task_id=task_id, vector=vector, k=1, kind=kind,
+        )
+        if hits:
+            return hits[0]
+    return None
+
+
+#: 「这句话在问整个资料库」的判据。必须与全局问答的实际说法对得上，宁可少判不可误判 ——
+#: 误判的代价是每一条普通问答都被塞一张「全库共 N 份资料」的卡片。
+_GLOBAL_MARKERS = (
+    "一共",
+    "总共",
+    "多少份",
+    "多少条",
+    "全部",
+    "整个",
+    "所有",
+    "资料库",
+    "知识库",
+    "汇总",
+    "概览",
+    "总览",
+    "有哪些资料",
+)
+
+
+def _wants_global(question: str) -> bool:
+    """判断问题是不是在问「整个资料库」。
+
+    为什么要有这道闸（而不是「前 k 没卡片就补一张」）
+    ------------------------------------------------
+    提示词 §5.3 三的字面写法是「前 k 里没有任何 summary/rule 就替换末位」。按字面实现
+    的结果是**每一个问题**都会被塞一张概览卡 —— k=3 时三分之一是「全库共 6 份资料」，
+    而用户问的是「普通图书借几本」。实测 A3 的 `test_rrf_mode_shape` /
+    `test_hybrid_mode_shape` / `test_options_rerank` 五条同时失败，失败原因正是
+    「引用里混进了非精排档位的卡片」。
+
+    所以改成：先判断问题是不是**真的**在问全局，再决定要不要补卡。判据是显式词表 ——
+    可解释、可测试、不误伤普通问答。代价是改写过的口语（「这套资料都讲了些啥」）
+    可能漏判，那种情况退回普通片段，不会答错，只是少一张卡。
+
+    @param question 已改写的问题
+    @return 是则 True
+    """
+    text = (question or "").strip()
+    if not text:
+        return False
+    return any(marker in text for marker in _GLOBAL_MARKERS)
 
 
 def retrieve(
@@ -327,10 +474,14 @@ def retrieve(
         doc_ids=list(req.doc_ids),
         kind=req.kind,
     )
+    # N3：正常召回只看普通片段（`kind=chunk`）。摘要卡不参与自由竞争 —— 它是「全库概览」，
+    # 与任何具体问题都不算特别近也不算远，让它自由竞争的结果是**随机地**挤掉真实片段
+    # （实测问「借几本」拿到「全库共 6 份资料」）。兜底逻辑见 `_with_summary_card`。
+    recall_kind = req.kind or "chunk"
     dense = runtime.store().search(
         user_id=user_id, task_id=task_id, vector=vector,
         k=max(settings.retrieval_candidate_limit, req.k),
-        doc_ids=req.doc_ids, kind=req.kind,
+        doc_ids=req.doc_ids, kind=recall_kind,
     )
     if not dense:
         rows = _fallback_rows(user_id, req)
@@ -359,7 +510,9 @@ def retrieve(
         return result
 
     scoped = _scoped_rows(user_id, task_id, req)
-    sparse = bm25_cache.build(user_id, task_id, scoped).top(rewritten, settings.retrieval_candidate_limit)
+    sparse = bm25_cache.build(
+        user_id, task_id, scoped, scope=f"{recall_kind}|{','.join(sorted(req.doc_ids))}",
+    ).top(rewritten, settings.retrieval_candidate_limit)
     diagnostics["sparse"] = [{"chunkId": row["chunk_id"], "score": row["score"]} for row in sparse]
     if selected_mode == "bm25":
         result = pipeline.recall(runtime.store(), request, stage="sparse", candidates=sparse)
@@ -374,6 +527,7 @@ def retrieve(
         # rerank=false 的实验组走这条：分数阶段是 rrf，不是 rerank。
         result = pipeline.recall(runtime.store(), request, stage="rrf", candidates=fused)
         result.diagnostics = diagnostics
+        _with_summary_card(result, user_id, task_id, vector, req, rewritten)
         return result
 
     reranker = runtime.reranker()
@@ -386,7 +540,73 @@ def retrieve(
     candidates = ranked + [row for row in fused if row["chunk_id"] not in ranked_ids]
     result = pipeline.recall(runtime.store(), request, stage="rerank", candidates=candidates)
     result.diagnostics = diagnostics
+    _with_summary_card(result, user_id, task_id, vector, req, rewritten)
     return result
+
+
+def _with_summary_card(
+    result: pipeline.RecallResult,
+    user_id: int,
+    task_id: str,
+    vector: list[float],
+    req: RetrieveRequest,
+    question: str,
+) -> None:
+    """前 k 里没有任何 summary/rule 时，用最优摘要卡替换末位（N3 的检索兜底）。
+
+    三个约束都来自提示词，别自己放宽：
+
+    1. **保持 k 不变**：替换而不是追加 —— 多给一条会让 `len(citations) == k` 的既有断言
+       与「引用条数等于 k」的语义一起失效；
+    2. **被替换的那条 `retrieved` 置 false 但仍留在 rows 里**：它在 F08 的淘汰区，
+       用户点开「检索过程」要能看到「这条本来进了，被摘要卡顶掉了」；
+    3. **只在 rag/both 生效**：direct 不检索，压根走不到这里。
+
+    @param result 已组装好的检索结果（原地修改）
+    @param user_id 归属用户
+    @param task_id 任务号
+    @param vector 查询向量
+    @param req 检索请求
+    @param question 已改写的问题（判断是否在问全局）
+    """
+    if not result.citations:
+        return
+    if any(item.get("kind") in ("summary", "rule") for item in result.citations):
+        return
+    if not _wants_global(question):
+        return
+    card = _best_card(user_id, task_id, vector, req)
+    if card is None:
+        return
+    citations = list(result.citations)
+    rows = list(result.rows)
+    keep = max(0, len(citations) - 1)
+    dropped = citations[keep] if keep < len(citations) else None
+    if dropped is not None:
+        # 被顶掉的那条退回淘汰区：rows 里对应行的 retrieved 改 false。
+        for row in rows:
+            if row.get("chunk_id") == dropped.get("chunk_id"):
+                row["retrieved"] = False
+                break
+    replacement = pipeline._as_citation(keep + 1, card, "dense")
+    citations = citations[:keep] + [replacement]
+    # 轨迹行也必须补上这张卡，否则 rows 里根本没有它 —— 前端「检索过程」看不到摘要卡命中，
+    # 而 citations 里有，两边对不上。
+    card_row = pipeline._as_trace_row(keep + 1, card, "dense")
+    rows = rows[:keep] + [card_row] + rows[keep + 1 :]
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    for index, citation in enumerate(citations, start=1):
+        citation["ref"] = index
+    result.citations = citations
+    result.rows = rows
+    result.diagnostics = {
+        **(result.diagnostics or {}),
+        "summaryFallback": {
+            "chunkId": card["chunk_id"],
+            "replaced": dropped.get("chunk_id") if dropped else None,
+        },
+    }
 
 
 def retrieve_data(
@@ -446,7 +666,11 @@ def task_chunks(user_id: int, task_id: str) -> list[dict[str, Any]]:
 
 
 def index_manifest(user_id: int, embedding_model: str, chunk_size: int, overlap: int) -> dict[str, Any]:
-    """按该用户最近成功任务产出索引清单，无任务时回退请求默认值。"""
+    """按该用户最近成功任务产出索引清单，无任务时回退请求默认值。
+
+    `summary` 字段（N3）如实反映摘要卡有没有生成：`cards = 0` 表示本次建库降级为
+    「无摘要卡」（LLM 失败或 `gen_summary=false`），**不是**「还没算」。
+    """
     latest = state.latest_succeeded_task(user_id)
     if latest is None:
         return {
@@ -458,19 +682,32 @@ def index_manifest(user_id: int, embedding_model: str, chunk_size: int, overlap:
             "chunk_count": 0,
             "built_at": None,
             "sha256": "",
+            "summary": None,
         }
     task_id = str(latest["task_id"])
     chunks = state.list_chunks(user_id, task_id)
     doc_ids = {row["doc_id"] for row in chunks}
+    cards = [row for row in chunks if row["kind"] in ("summary", "rule")]
+    summary = (
+        {
+            "model": embedding_model,
+            "cards": len(cards),
+            "kinds": sorted({row["kind"] for row in cards}),
+        }
+        if cards
+        else None
+    )
     return {
         "status": "ready" if chunks else "needs_rebuild",
         "embedding_model": embedding_model,
         "chunk_size": int(latest.get("chunk_size", chunk_size)),
         "overlap": int(latest.get("overlap", overlap)),
-        "doc_count": len(doc_ids),
+        # 摘要卡的 doc_id 是 "__summary__"，它不属于任何一份资料，不能算进 doc_count。
+        "doc_count": len(doc_ids - {summarizer.SUMMARY_DOC_ID}),
         "chunk_count": len(chunks),
         "built_at": latest["finished_at"],
         "sha256": "",
+        "summary": summary,
     }
 
 

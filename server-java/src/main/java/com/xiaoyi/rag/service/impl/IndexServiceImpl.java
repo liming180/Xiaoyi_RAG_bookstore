@@ -412,7 +412,10 @@ public class IndexServiceImpl implements IndexService {
                                     task.getChunkSize(),
                                     task.getOverlap(),
                                     task.getSubmissionKey(),
-                                    task.getGeneration()));
+                                    task.getGeneration(),
+                                    // N3：显式传 true 而不是靠默认值。摘要卡是搜索质量的
+                                    // 一部分，默认关闭过一次就再没人打开；要关得显式关。
+                                    true));
         } catch (RuntimeException ex) {
             // 带上异常本体：只打 getMessage() 时，Connection reset 这类网络失败在日志里
             // 只剩一句「Python AI request failed」，没有堆栈就分不清是超时、连不上还是对端关连接。
@@ -465,7 +468,7 @@ public class IndexServiceImpl implements IndexService {
     @Override
     @Transactional(readOnly = true)
     public List<ChunkItemVO> listChunks(Long userId, String docId, String q, String kind) {
-        Long docFilter = docId == null || docId.isBlank() ? null : parseId(docId);
+        Long docFilter = docFilterOf(docId);
         String keyword = q == null || q.isEmpty() ? null : q;
         String kindFilter = kind == null || kind.isBlank() ? null : kind.trim();
 
@@ -485,7 +488,7 @@ public class IndexServiceImpl implements IndexService {
             result.add(
                     new ChunkItemVO(
                             row.getChunkId(),
-                            String.valueOf(row.getDocId()),
+                            docIdLabel(row.getDocId()),
                             row.getDocTitle(),
                             row.getHeadingPath(),
                             row.getText(),
@@ -496,6 +499,44 @@ public class IndexServiceImpl implements IndexService {
                             row.getSeq() == null ? result.size() : row.getSeq()));
         }
         return result;
+    }
+
+    /**
+     * 库里 `doc_id = 0` 的片段是摘要卡（见 {@link Chunk#SUMMARY_DOC_ID}），对外要还原成 Python 侧的哨兵字符串
+     * `"__summary__"`。
+     *
+     * <p>契约里 `ChunkItem.docId` 是 `EntityId`（字符串或正整数），给 `0` 会直接违约。
+     *
+     * @param docId 库里的 doc_id
+     * @return 对外展示的 docId
+     */
+    private static String docIdLabel(Long docId) {
+        if (docId == null) {
+            return "";
+        }
+        return docId == Chunk.SUMMARY_DOC_ID ? Chunk.SUMMARY_DOC_LABEL : String.valueOf(docId);
+    }
+
+    /**
+     * 把 `?docId=` 参数翻译成库里的过滤值。
+     *
+     * <p>要认三个输入：空串（不过滤）、`"__summary__"`（只看摘要卡，翻成 0）、普通数字 id。 不认 `"__summary__"`
+     * 的话，前端点「只看摘要」会静默返回空列表 —— 看起来像「没有摘要卡」。
+     *
+     * @param docId 查询参数
+     * @return 库里的 doc_id；空串返回 null（不过滤）
+     */
+    private Long docFilterOf(String docId) {
+        if (docId == null || docId.isBlank()) {
+            return null;
+        }
+        if (Chunk.SUMMARY_DOC_LABEL.equals(docId.trim())) {
+            return Chunk.SUMMARY_DOC_ID;
+        }
+        Long parsed = parseId(docId);
+        // 解析不了（比如 "abc"）就当「不匹配任何行」：回 0 比回全部安全得多，
+        // 后者会让前端以为过滤没生效。
+        return parsed == null ? -1L : parsed;
     }
 
     /* ------------------------------------------------------------ 轮询 */
@@ -591,7 +632,7 @@ public class IndexServiceImpl implements IndexService {
         long now = Instant.now().getEpochSecond();
         int seq = 0;
         for (AiChunk source : chunks) {
-            Long docId = parseId(source.docId());
+            Long docId = chunkDocId(source);
             if (docId == null) {
                 continue;
             }
@@ -613,6 +654,24 @@ public class IndexServiceImpl implements IndexService {
         }
         chunkRepository.saveAll(entities);
         return entities.size();
+    }
+
+    /**
+     * 片段归属的资料 id。
+     *
+     * <p>摘要卡（N3）的 `doc_id` 是 Python 侧的哨兵字符串 `"__summary__"`，而 `chunk.doc_id` 是 `BIGINT NOT
+     * NULL`。这里把哨兵翻成 {@link Chunk#SUMMARY_DOC_ID}（0），对外输出时 再由 {@code listChunks} 翻回去。
+     *
+     * <p>**不能直接 `parseId` 后跳过**：那会把摘要卡整条丢掉 —— 现象是「建库成功、任务 chunkCount 含卡片、但片段列表里一张都没有」，极难查。
+     *
+     * @param source Python 回传的片段
+     * @return 落库用的 docId；非摘要卡且 docId 非法时返回 null（该条跳过）
+     */
+    private Long chunkDocId(AiChunk source) {
+        if (Chunk.KIND_SUMMARY.equals(source.kind()) || Chunk.KIND_RULE.equals(source.kind())) {
+            return Chunk.SUMMARY_DOC_ID;
+        }
+        return parseId(source.docId());
     }
 
     /**

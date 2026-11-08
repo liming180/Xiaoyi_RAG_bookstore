@@ -206,7 +206,11 @@ def test_status_doc_count_matches_documents(java_client, clean_db):
 
 
 def test_chunks_return_contract_shape(java_client, clean_db):
-    """片段对象 10 个字段齐全（契约 ChunkItem，注意**没有 score**）。"""
+    """片段对象 10 个字段齐全（契约 ChunkItem，注意**没有 score**）。
+
+    N3 之后列表里会混进摘要卡（`docId = "__summary__"`、`chunkId` 形如 `D00-C001`），
+    它们不属于任何一份资料，所以 `docId == doc["id"]` 只对普通片段成立。
+    """
     final, doc = _rebuild_and_wait(java_client, clean_db)
     assert final["chunkCount"] > 0, final
 
@@ -218,7 +222,12 @@ def test_chunks_return_contract_shape(java_client, clean_db):
         assert set(row) == CHUNK_KEYS, f"字段集不对：{sorted(row)}"
         assert isinstance(row["chunkId"], str) and row["chunkId"], row
         assert row["chunkId"].startswith("D"), row
-        assert row["docId"] == doc["id"], (row, doc)
+        if row["kind"] == "chunk":
+            assert row["docId"] == doc["id"], (row, doc)
+        else:
+            # 摘要卡：docId 是哨兵字符串，编号固定 D00-*。
+            assert row["docId"] == "__summary__", row
+            assert row["chunkId"].startswith("D00-C"), row
         assert row["docTitle"], row
         assert isinstance(row["text"], str) and row["text"], row
         assert isinstance(row["start"], int) and row["start"] >= 0, row
@@ -255,15 +264,26 @@ def test_chunks_filter_by_keyword_is_case_sensitive(java_client, clean_db):
 
 
 def test_chunks_filter_by_kind(java_client, clean_db):
-    """kind 过滤：mock 只产 chunk，所以 kind=rule 该为空、kind=chunk 该有值。"""
+    """kind 过滤：三个取值各自只回本类片段。
+
+    N3 之后 mock 档也会产出摘要卡（统计卡 + 规则卡），所以 `kind=rule` 不再是空数组 ——
+    旧断言「mock 不产 rule」写于 N3 之前。
+    """
     final, _doc = _rebuild_and_wait(java_client, clean_db)
     assert final["chunkCount"] > 0, final
 
     chunk_rows = _chunks(java_client.get("/api/v1/chunks?kind=chunk").json())
-    assert chunk_rows, "mock 产物 kind 都是 chunk"
+    assert chunk_rows, "普通片段必须有"
+    assert all(row["kind"] == "chunk" for row in chunk_rows), chunk_rows
 
     rule_rows = _chunks(java_client.get("/api/v1/chunks?kind=rule").json())
-    assert rule_rows == [], f"mock 不产 rule 片段：{rule_rows}"
+    assert rule_rows, "N3 之后 mock 档会产出规则卡"
+    assert all(row["kind"] == "rule" for row in rule_rows), rule_rows
+    assert all(row["docId"] == "__summary__" for row in rule_rows), rule_rows
+
+    summary_rows = _chunks(java_client.get("/api/v1/chunks?kind=summary").json())
+    assert summary_rows, "N3 之后 mock 档会产出统计卡"
+    assert all(row["kind"] == "summary" for row in summary_rows), summary_rows
 
 
 def test_chunks_filters_combine(java_client, clean_db):
