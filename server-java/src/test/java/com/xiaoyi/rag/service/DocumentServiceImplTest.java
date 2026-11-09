@@ -175,6 +175,76 @@ class DocumentServiceImplTest {
         verify(documents).markIndexedAsNeedsRebuild(OWNER);
     }
 
+    /* ------------------------------------------------------------ 99 份上限 */
+
+    @Test
+    @DisplayName("已有 99 份再传 1 份：上传口前置拒绝 40001，不落库不落盘")
+    void uploadRejectsWhenUserAlreadyAtLimit() throws IOException {
+        MockMultipartFile file =
+                new MockMultipartFile(
+                        "files", "extra.md", "text/markdown", "# 第100份\n正文".getBytes());
+        when(documents.countByUploadedByAndDeletedFalse(OWNER)).thenReturn(99L);
+
+        assertThatThrownBy(() -> service.upload(List.of(file), OWNER))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("资料数已达上限")
+                .hasMessageContaining("99")
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo(ErrorCode.INVALID_PARAM.getCode());
+
+        verify(documents, never()).save(any());
+        verify(storage, never()).store(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("还剩 1 个名额却一次传 2 份：整批拒绝，而不是收下 1 份让第 2 份在建库时炸")
+    void uploadRejectsWholeBatchWhenItWouldOverflow() {
+        MockMultipartFile first =
+                new MockMultipartFile("files", "a.md", "text/markdown", "# a\n正文".getBytes());
+        MockMultipartFile second =
+                new MockMultipartFile("files", "b.md", "text/markdown", "# b\n正文".getBytes());
+        when(documents.countByUploadedByAndDeletedFalse(OWNER)).thenReturn(98L);
+
+        assertThatThrownBy(() -> service.upload(List.of(first, second), OWNER))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo(ErrorCode.INVALID_PARAM.getCode());
+
+        verify(documents, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("刚好用满 99 份：放行，边界是 > 99 而不是 >= 99")
+    void uploadAllowsExactlyAtLimit() throws IOException {
+        MockMultipartFile file =
+                new MockMultipartFile("files", "last.md", "text/markdown", "# 第99份\n正文".getBytes());
+        when(documents.countByUploadedByAndDeletedFalse(OWNER)).thenReturn(98L);
+        when(documents.findFirstBySha256AndUploadedByAndDeletedFalse(any(), eq(OWNER)))
+                .thenReturn(Optional.empty());
+        when(documents.save(any())).thenAnswer(inv -> withId(inv.getArgument(0), 99L));
+        when(storage.store(eq(99L), eq("last.md"), any())).thenReturn("99/last.md");
+
+        UploadResultVO result = service.upload(List.of(file), OWNER);
+
+        assertThat(result.accepted()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("统计只看未删除的行：软删掉的那份不占名额")
+    void uploadCountsOnlyLiveDocuments() {
+        MockMultipartFile file =
+                new MockMultipartFile("files", "fresh.md", "text/markdown", "# 新\n正文".getBytes());
+        // 仓库方法本身带 deleted = false 条件，这里断言实现真的调了它 —— 换成 findAll 在内存里数就会把
+        // 软删的行算进来，表现是「删了还是传不上」。
+        when(documents.countByUploadedByAndDeletedFalse(OWNER)).thenReturn(98L);
+        when(documents.findFirstBySha256AndUploadedByAndDeletedFalse(any(), eq(OWNER)))
+                .thenReturn(Optional.of(document(11L, OWNER)));
+
+        service.upload(List.of(file), OWNER);
+
+        verify(documents).countByUploadedByAndDeletedFalse(OWNER);
+    }
+
     /* ------------------------------------------------------------ 构造 */
 
     private static Document withId(Document document, Long id) {

@@ -30,7 +30,7 @@ python tools\archive_evidence.py
 | `a3-compare-rerank.json` | 14,476 B | 6 题 · dense MRR 1.0 / hybrid MRR 0.9167 | `0d0916fc673ec5c0` |
 | `backend-gate-A2.json` | 5,815 B | pass · 6 个门禁 | `fa21a83a97a53b3c` |
 | `backend-gate-A3.json` | 6,918 B | pass · 3 个门禁 | `7f11d6f4e8c8e668` |
-| `backend-gate-all.json` | 2,975 B | pass · 11 个门禁 | `74c8696b4f5e7c82` |
+| `backend-gate-all.json` | 3,780 B | pass · 11 个门禁 | `b8bc1525016a9df9` |
 | `backend-gate-H0.json` | 759 B | pass · 3 个门禁 | `72cd6fbdbbb51a0a` |
 | `backend-gate-H1.json` | 538 B | pass · 3 个门禁 | `a9b9745f584c1769` |
 | `backend-gate-H2.json` | 737 B | pass · 4 个门禁 | `9e11b263b6cf866d` |
@@ -46,6 +46,7 @@ python tools\archive_evidence.py
 | `backend-gate-N3.json` | 8,942 B | pass · 11 个门禁 | `aca07d0b9fb51274` |
 | `backend-gate-N4.json` | 9,191 B | pass · 9 个门禁 | `74692108d6793190` |
 | `backend-gate-N5.json` | 7,535 B | pass · 6 个门禁 | `c8a2b6dc0cfa93c8` |
+| `backend-gate-N6.json` | 12,220 B | pass · 6 个门禁 | `1b42c273cdc2735f` |
 | `backend-gate-P7.json` | 13,732 B | pass | `a987df2de772c69a` |
 | `backend-gate-P8.json` | 11,228 B | pass · 10 个门禁 | `957575d0ecfda8af` |
 | `compose-smoke.json` | 514 B | pass | `e7aea915f0a82dc6` |

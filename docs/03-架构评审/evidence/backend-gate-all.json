@@ -20,7 +20,7 @@
     "mock",
     "real"
   ],
-  "timestamp": 1794125211,
+  "timestamp": 1794157572,
   "runs": [
     {
       "timestamp": 1794124919,
@@ -57,6 +57,62 @@
       "providers": [
         "mock"
       ]
+    },
+    {
+      "timestamp": 1794157146,
+      "stages": [
+        "J0",
+        "J1",
+        "J2",
+        "J4",
+        "J6",
+        "J7",
+        "A1",
+        "A2",
+        "A3"
+      ],
+      "providers": [
+        "real"
+      ]
+    },
+    {
+      "timestamp": 1794157328,
+      "stages": [
+        "J4"
+      ],
+      "providers": [
+        "real"
+      ]
+    },
+    {
+      "timestamp": 1794157465,
+      "stages": [
+        "J3",
+        "J5"
+      ],
+      "providers": [
+        "mock"
+      ]
+    },
+    {
+      "timestamp": 1794157494,
+      "stages": [
+        "J3",
+        "J5"
+      ],
+      "providers": [
+        "mock"
+      ]
+    },
+    {
+      "timestamp": 1794157572,
+      "stages": [
+        "J3",
+        "J5"
+      ],
+      "providers": [
+        "mock"
+      ]
     }
   ],
   "gates": [
@@ -65,99 +121,99 @@
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 5985,
-      "summary": "79 passed in 0.80s",
-      "ranAt": 1794124945
+      "elapsedMs": 6780,
+      "summary": "79 passed in 1.15s",
+      "ranAt": 1794157146
     },
     {
       "key": "J1",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 16422,
-      "summary": "77 passed, 1 skipped in 13.03s",
-      "ranAt": 1794124945
+      "elapsedMs": 10781,
+      "summary": "77 passed, 1 skipped in 6.54s",
+      "ranAt": 1794157146
     },
     {
       "key": "J2",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 22233,
-      "summary": "30 passed in 17.14s",
-      "ranAt": 1794124945
+      "elapsedMs": 26171,
+      "summary": "35 passed in 22.77s",
+      "ranAt": 1794157146
     },
     {
       "key": "J3",
       "ok": true,
       "provider": "mock",
       "exitCode": 0,
-      "elapsedMs": 52172,
-      "summary": "32 passed in 46.03s",
-      "ranAt": 1794125211
+      "elapsedMs": 45358,
+      "summary": "38 passed in 42.17s",
+      "ranAt": 1794157572
     },
     {
       "key": "J4",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 122656,
-      "summary": "30 passed in 118.45s (0:01:58)",
-      "ranAt": 1794124945
+      "elapsedMs": 102657,
+      "summary": "30 passed in 99.36s (0:01:39)",
+      "ranAt": 1794157328
     },
     {
       "key": "J5",
       "ok": true,
       "provider": "mock",
       "exitCode": 0,
-      "elapsedMs": 30281,
-      "summary": "23 passed in 26.35s",
-      "ranAt": 1794125211
+      "elapsedMs": 50796,
+      "summary": "41 passed in 47.71s",
+      "ranAt": 1794157572
     },
     {
       "key": "J6",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 8266,
-      "summary": "12 passed, 1 warning in 4.80s",
-      "ranAt": 1794124945
+      "elapsedMs": 8484,
+      "summary": "12 passed, 1 warning in 4.30s",
+      "ranAt": 1794157146
     },
     {
       "key": "J7",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 14500,
-      "summary": "18 passed, 1 warning in 11.35s",
-      "ranAt": 1794124945
+      "elapsedMs": 12358,
+      "summary": "18 passed, 1 warning in 8.97s",
+      "ranAt": 1794157146
     },
     {
       "key": "A1",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 5656,
-      "summary": "11 passed in 2.67s",
-      "ranAt": 1794124945
+      "elapsedMs": 15094,
+      "summary": "24 passed in 11.68s",
+      "ranAt": 1794157146
     },
     {
       "key": "A2",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 10608,
-      "summary": "21 passed, 1 warning in 7.67s",
-      "ranAt": 1794124945
+      "elapsedMs": 14952,
+      "summary": "37 passed, 1 warning in 11.48s",
+      "ranAt": 1794157146
     },
     {
       "key": "A3",
       "ok": true,
       "provider": "real",
       "exitCode": 0,
-      "elapsedMs": 10891,
-      "summary": "23 passed, 1 warning in 7.09s",
-      "ranAt": 1794124945
+      "elapsedMs": 11078,
+      "summary": "31 passed, 2 skipped, 1 warning in 7.67s",
+      "ranAt": 1794157146
     }
   ]
 }

@@ -74,6 +74,20 @@ public class DocumentServiceImpl implements DocumentService {
     /** 标题长度上限，与 document.title VARCHAR(255) 对齐。 */
     private static final int MAX_TITLE_LEN = 255;
 
+    /**
+     * 每个用户的资料数上限，与 Python 侧 {@code splitter.MAX_DOCS_PER_USER} 同值。
+     *
+     * <p>契约里 chunk_id 形如 {@code D\d{2}-C\d{3}}，文档号只有两位十进制，所以同时最多 99 份。这条约束原本只在 Python 建库时才撞上（第 100
+     * 份直接建库失败），用户传完一批、点建库、等几秒，才看到一句「编号不够用」。 挪到上传口前置拒绝：**先告诉他不能收，好过收下了再退**。
+     *
+     * <p>为什么不用「已存 99 份」直接当判据：软删的资料不占编号，{@code deleted = false} 才是真实占用数，见 {@code
+     * DocumentRepository#countByUploadedByAndDeletedFalse}。
+     */
+    private static final int MAX_DOCS_PER_USER = 99;
+
+    private static final String REASON_LIMIT =
+            "资料数已达上限：同时最多 " + MAX_DOCS_PER_USER + " 份，请先删除不再需要的资料";
+
     private final DocumentRepository documentRepository;
 
     private final IndexTaskRepository indexTaskRepository;
@@ -105,6 +119,7 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     @Transactional
     public UploadResultVO upload(List<MultipartFile> files, Long userId) {
+        requireCapacity(files, userId);
         List<DocumentVO> accepted = new ArrayList<>();
         List<UploadSkippedVO> skipped = new ArrayList<>();
         for (MultipartFile file : files) {
@@ -187,6 +202,24 @@ public class DocumentServiceImpl implements DocumentService {
             markNeedsRebuild(userId);
         }
         return new UploadResultVO(accepted, skipped);
+    }
+
+    /**
+     * 上传前的前置容量校验：收下来但存不进编号，比当场说不行更糟。
+     *
+     * <p>只统计 {@code deleted = false} 的行 —— 软删的资料不占 chunk_id 编号，把它们算进来会让用户「删了还是传不上」。
+     *
+     * <p>判据是 {@code 已有 + 本次提交的文件数 > 99}，而不是「已有 >= 99」：一次传 5 份、已有 96 份，实际只会落 3 份， 但第 4、5
+     * 份会在建库时炸，所以整批拒绝更诚实。**这里数的是请求里的文件数，不是最终会落盘的数量** —— 无法在下拉前预判去重/后缀/大小/编码，宁可把「本批可能超限」当作超限。
+     */
+    private void requireCapacity(List<MultipartFile> files, Long userId) {
+        if (files == null || files.isEmpty()) {
+            return;
+        }
+        long existing = documentRepository.countByUploadedByAndDeletedFalse(userId);
+        if (existing + files.size() > MAX_DOCS_PER_USER) {
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), REASON_LIMIT);
+        }
     }
 
     @Override
