@@ -56,8 +56,11 @@ server-java/storage/
 test/storage/
 
 # ---- Milvus ----
-# deploy/milvus/user.yaml 含智谱 API key，只提交 user.yaml.example
+# Milvus 的 user.yaml 含智谱 API key，只提交 user.yaml.example。
+# 注意：目录搬迁后旧规则（deploy/milvus/）会失效，必须覆盖新路径，
+# 否则 infra/milvus/user.yaml 会被误提交（本轮已踩过，key 暴露在待推提交里）。
 deploy/milvus/user.yaml
+infra/milvus/user.yaml
 
 # ---- 一键启动生成的启动器 ----
 # deploy/run/*.cmd 由 deploy/scripts/make_launchers.py 生成，
