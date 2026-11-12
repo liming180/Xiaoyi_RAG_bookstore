@@ -28,15 +28,48 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import p7_env  # noqa: E402
 import p7_up  # noqa: E402
 
-# 与 _dev_up_ai.py 的 PROVIDER 段保持一致（真实 provider 档）
+# 与 _dev_up_ai.py 的 PROVIDER 段保持一致（真实 provider 档）。
+#
+# 密钥来源：环境变量 ZHIPU_API_KEY。
+# 绝不硬编码 —— 生成出的 deploy/run/*.cmd 会把它写成字面量，
+# 而本文件是**入库**的，硬编码等于把 key 提交到 git。
+# 取不到 key 时回落到 mock 档，保证没有 key 也能本地跑通。
+def _load_zhipu_key() -> str:
+    """按优先级取智谱 API key：环境变量 > 本地未跟踪文件。
+
+    本地文件 deploy/milvus/user.yaml 里有 key，但已被 gitignore（含明文密钥）。
+    这样开发者不用每次设环境变量，而仓库里始终不含 key。
+    """
+    key = os.getenv("ZHIPU_API_KEY", "").strip()
+    if key:
+        return key
+    import re as _re
+    for candidate in (
+        ROOT / "deploy" / "local-ai.env",
+        ROOT / "infra" / "milvus" / "user.yaml",
+    ):
+        if not candidate.exists():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matched = _re.search(r"apikey:\s*([0-9a-f]{32}\.[A-Za-z0-9_-]+)", text)
+        if matched:
+            return matched.group(1).strip()
+    return ""
+
+
+_ZHIPU_KEY = _load_zhipu_key()
+
 AI_PROVIDER = {
-    "AI_PROVIDER": "real",
+    "AI_PROVIDER": "real" if _ZHIPU_KEY else "mock",
     "EMBEDDING_ENDPOINT": "https://open.bigmodel.cn/api/paas/v4",
     "EMBEDDING_MODEL": "embedding-3",
-        "EMBEDDING_BATCH_SIZE": "8",
+    "EMBEDDING_BATCH_SIZE": "8",
     "LLM_ENDPOINT": "https://open.bigmodel.cn/api/paas/v4",
     "LLM_MODEL": "glm-4-flash",
-        "LLM_TIMEOUT_MS": "60000",
+    "LLM_TIMEOUT_MS": "60000",
     # 向量库：milvus-lite（纯 Python 内嵌，无需 Docker）。
     #
     # 注意变量名：不能用 MILVUS_URI 传文件路径。
@@ -214,6 +247,12 @@ def main() -> int:
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
     }
+    # 只有拿到 key 才写进启动器；没有就走 mock 档（AI_PROVIDER 已回落）。
+    if _ZHIPU_KEY:
+        ai_env["EMBEDDING_API_KEY"] = _ZHIPU_KEY
+        ai_env["LLM_API_KEY"] = _ZHIPU_KEY
+    else:
+        print("[make_launchers] 未设置 ZHIPU_API_KEY，本次生成 mock 档启动器")
     ai_cmd = (
         f'"{sys.executable}" -m uvicorn app.main:app '
         f"--host 127.0.0.1 --port 8000 --timeout-keep-alive 75"
