@@ -1,0 +1,145 @@
+# 交付形态：三端 + MySQL 全部在容器里。
+#
+# 这是「一套 compose 起全栈」的形态，需要能拉到 mysql:8.0 / python:3.12-slim /
+# maven / node / nginx 五个基础镜像。网络受限时的两条等价路径：
+#   deploy/docker-compose.localdb.yml           数据库用宿主机 MySQL，仍容器内构建
+#   deploy/docker-compose.localdb-prebuilt.yml  数据库用宿主机 MySQL，只打包运行期产物
+#
+# 用法：
+#   python tools/docker_deploy.py --mode full --prepare-db up --smoke
+#   或手工：
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/local-mysql.env up -d --build
+#
+# 注意：本形态用的是 mysql 容器，--prepare-db 里的建库/建号步骤对它是多余的
+# （MYSQL_DATABASE / MYSQL_USER 由镜像初始化），此时不要带 --prepare-db。
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-xiaoyi_rag}
+      # 不能直接用 ${MYSQL_USER}：deploy/local-mysql.env 里它是 root（宿主机模式的
+      # 本机账号），而 mysql 镜像的 entrypoint 明确拒绝 MYSQL_USER=root，
+      # 报 MYSQL_USER and MYSQL_PASSWORD are for configuring a regular user。
+      MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  python-ai:
+    build:
+      context: ../../../services/ai-api
+      dockerfile: Dockerfile
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      STORAGE_ROOT: /var/lib/xiaoyi-ai
+      # 只被 server-ai/app/config.py 读取，Java 不读。
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+      # 向量化与生成走真实服务（默认智谱 OpenAI 兼容端点）；设 mock 则完全离线。
+      AI_PROVIDER: ${AI_PROVIDER:-real}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # A3 混合检索：默认 hybrid（双路 + RRF + 重排降级）。
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      RETRIEVAL_CANDIDATE_LIMIT: ${RETRIEVAL_CANDIDATE_LIMIT:-20}
+      RETRIEVAL_RRF_K: ${RETRIEVAL_RRF_K:-60}
+      RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-true}
+      RETRIEVAL_REWRITE: ${RETRIEVAL_REWRITE:-true}
+      RERANK_ENDPOINT: ${RERANK_ENDPOINT:-}
+      RERANK_MODEL: ${RERANK_MODEL:-rerank}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
+      # 本文件是自包含的交付形态：Milvus 不在本栈里，走宿主机已发布的 19530。
+      # 想接 compose 内网络（xiaoyi-net）的 milvus 容器时，把这里改成
+      # http://milvus:19530 并给本服务加 external 网络。
+      MILVUS_URI: ${MILVUS_URI:-http://host.docker.internal:19530}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 开启 Milvus 鉴权后必填（镜像出厂默认密码是 "Milvus"，不是空串）
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ai-state:/var/lib/xiaoyi-ai
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/internal/v1/health', headers={'X-Internal-Token': os.environ['INTERNAL_TOKEN']}); urllib.request.urlopen(req, timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  java-backend:
+    build:
+      context: ../../../
+      dockerfile: infra/docker/images/java-api/Dockerfile
+    environment:
+      AI_SERVICE_URL: http://python-ai:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is required (min 32 bytes)}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-xiaoyi-rag}
+      # 账号只能由部署方显式投放（AuthAccountBootstrap），没有公开注册接口。
+      # 留空即不建号；要给前端真实登录用，必须同时给出用户名与 ≥12 字节的密码。
+      AUTH_BOOTSTRAP_USERNAME: ${AUTH_BOOTSTRAP_USERNAME:-}
+      AUTH_BOOTSTRAP_PASSWORD: ${AUTH_BOOTSTRAP_PASSWORD:-}
+      AUTH_SECONDARY_BOOTSTRAP_USERNAME: ${AUTH_SECONDARY_BOOTSTRAP_USERNAME:-}
+      AUTH_SECONDARY_BOOTSTRAP_PASSWORD: ${AUTH_SECONDARY_BOOTSTRAP_PASSWORD:-}
+      AI_MOCK: "false"
+      # gate-probe 才注册 GateProbeController 的 /__gate/throw，J1 错误码用例靠它。
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-gate-probe}
+      STORAGE_ROOT: /app/storage
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-xiaoyi_rag}
+      # 同上：root 只配了 MYSQL_ROOT_PASSWORD，业务连接必须用普通账号。
+      MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+    volumes:
+      - ../../../services/java-api/storage:/app/storage
+    depends_on:
+      mysql:
+        condition: service_healthy
+      python-ai:
+        condition: service_healthy
+    ports:
+      - "${JAVA_PORT:-8080}:8080"
+    healthcheck:
+      # eclipse-temurin:21-jre 的 /bin/sh 是 dash，不支持 bash 的 /dev/tcp 重定向。
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  frontend:
+    build:
+      context: ../../../apps/web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api/v1}
+    depends_on:
+      java-backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+
+volumes:
+  mysql-data:
+  ai-state:

@@ -1,0 +1,141 @@
+# 用 Docker 起整套服务，数据库用「本机已装的 MySQL 8.0.39」，不起 mysql 容器。
+#
+# 这是「容器内构建」形态：java 用 maven 基础镜像编译，frontend 用 node 基础镜像
+# npm ci + vite build。需要能拉到 maven / node / nginx / python 四个基础镜像。
+#
+# 网络受限时的等价路径（不跑 Maven、不跑 npm ci）：deploy/docker-compose.localdb-prebuilt.yml。
+# 交付形态（含 mysql:8.0 容器）：deploy/docker-compose.yml。
+#
+# 用法：
+#   copy deploy\local-mysql.env.example deploy\local-mysql.env   # 填本机 MySQL 口令与随机密钥
+#   python tools/docker_deploy.py --mode full --prepare-db up --smoke
+#   或手工：
+#   docker compose -f deploy/docker-compose.localdb.yml --env-file deploy/local-mysql.env up -d --build
+#
+# 前置：本机 MySQL 已建库（只需建空库，不建表）：
+#   mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS xiaoyi_rag_local_gate
+#                        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+#
+# 本机 MySQL 必须允许从容器网段连入。容器看到的来源地址是 Docker 网关（Linux 上通常是
+# 172.17.0.1 / 172.18.0.1），因此 root@localhost 不能用。推荐单独建一个账号：
+#   python tools/local_mysql_grant_container.py
+
+services:
+  python-ai:
+    build:
+      context: ../../../services/ai-api
+      dockerfile: Dockerfile
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      STORAGE_ROOT: /var/lib/xiaoyi-ai
+      # 只被 server-ai/app/config.py 读取，Java 不读。默认 1200 > Java 的 1s 轮询周期，
+      # 否则 splitting/embedding/summarizing 三个阶段会在两次轮询之间跑完。
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+      # 向量化与生成走真实服务（默认智谱 OpenAI 兼容端点）；设 mock 则完全离线。
+      AI_PROVIDER: ${AI_PROVIDER:-real}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-60000}
+      # A3 混合检索：默认 hybrid（双路 + RRF + 重排降级）。
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      RETRIEVAL_CANDIDATE_LIMIT: ${RETRIEVAL_CANDIDATE_LIMIT:-20}
+      RETRIEVAL_RRF_K: ${RETRIEVAL_RRF_K:-60}
+      RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-true}
+      RETRIEVAL_REWRITE: ${RETRIEVAL_REWRITE:-true}
+      RERANK_ENDPOINT: ${RERANK_ENDPOINT:-}
+      RERANK_MODEL: ${RERANK_MODEL:-rerank}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
+      # Milvus 在 deploy/milvus/docker-compose.yml 里，共用 xiaoyi-net 网络。
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 开启 Milvus 鉴权后必填（镜像出厂默认密码是 "Milvus"，不是空串）
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
+    volumes:
+      - ai-state:/var/lib/xiaoyi-ai
+    networks:
+      - default
+      - xiaoyi-net
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/internal/v1/health', headers={'X-Internal-Token': os.environ['INTERNAL_TOKEN']}); urllib.request.urlopen(req, timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  java-backend:
+    build:
+      context: ../../../
+      dockerfile: infra/docker/images/java-api/Dockerfile
+    environment:
+      AI_SERVICE_URL: http://python-ai:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is required (min 32 bytes)}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-xiaoyi-rag}
+      # 账号只能由部署方显式投放（AuthAccountBootstrap），没有公开注册接口。
+      AUTH_BOOTSTRAP_USERNAME: ${AUTH_BOOTSTRAP_USERNAME:-}
+      AUTH_BOOTSTRAP_PASSWORD: ${AUTH_BOOTSTRAP_PASSWORD:-}
+      AUTH_SECONDARY_BOOTSTRAP_USERNAME: ${AUTH_SECONDARY_BOOTSTRAP_USERNAME:-}
+      AUTH_SECONDARY_BOOTSTRAP_PASSWORD: ${AUTH_SECONDARY_BOOTSTRAP_PASSWORD:-}
+      AI_MOCK: "false"
+      # gate-probe 才注册 GateProbeController 的 /__gate/throw。
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-gate-probe}
+      STORAGE_ROOT: /app/storage
+      # 关键差异：不再指向 mysql 容器，而是宿主机上的 3306。
+      MYSQL_HOST: ${MYSQL_HOST_FOR_CONTAINER:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE is required}
+      # local-mysql.env 里的 MYSQL_USER=root 只能从 localhost 登录；容器必须用
+      # tools/local_mysql_grant_container.py 建的 '%' 账号。
+      MYSQL_USER: ${MYSQL_USER_FOR_CONTAINER:-xiaoyi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      INGEST_STAGE_DELAY_MS: ${INGEST_STAGE_DELAY_MS:-1200}
+      # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
+      INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
+    volumes:
+      - ../../../services/java-api/storage:/app/storage
+    # Docker Desktop（Windows/macOS）自带 host.docker.internal；Linux 上要靠这条映射。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      python-ai:
+        condition: service_healthy
+    ports:
+      - "${JAVA_PORT:-8080}:8080"
+    healthcheck:
+      # eclipse-temurin:21-jre 的 /bin/sh 是 dash，不支持 bash 的 /dev/tcp 重定向。
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  frontend:
+    build:
+      context: ../../../apps/web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api/v1}
+    depends_on:
+      java-backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+
+volumes:
+  ai-state:
+
+networks:
+  # 与 deploy/milvus/docker-compose.yml 共用同一个网络，python-ai 才能用容器名 milvus 解析。
+  xiaoyi-net:
+    external: true
+    name: xiaoyi-net
