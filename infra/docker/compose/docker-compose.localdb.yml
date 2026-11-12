@@ -23,7 +23,7 @@
 services:
   python-ai:
     build:
-      context: ../../../services/ai-api
+      context: ../../../backend/ai-api
       dockerfile: Dockerfile
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
@@ -102,7 +102,7 @@ services:
       # 未建库时 /index/status 显示的模型名；建库后以 Python manifest 回传的为准。
       INDEX_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mock-embedding}
     volumes:
-      - ../../../services/java-api/storage:/app/storage
+      - ../../../backend/java-api/storage:/app/storage
     # Docker Desktop（Windows/macOS）自带 host.docker.internal；Linux 上要靠这条映射。
     extra_hosts:
       - "host.docker.internal:host-gateway"

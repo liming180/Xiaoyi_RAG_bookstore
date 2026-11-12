@@ -191,7 +191,7 @@ def main() -> int:
     write_cmd(
         RUN_DIR / "java.cmd",
         java_env,
-        ROOT / "services" / "java-api",
+        ROOT / "backend" / "java-api",
         java_cmd,
         ROOT / "test-artifacts" / "p7-java-fg.log",
     )
@@ -211,14 +211,14 @@ def main() -> int:
     write_cmd(
         RUN_DIR / "ai.cmd",
         ai_env,
-        ROOT / "services" / "ai-api",
+        ROOT / "backend" / "ai-api",
         ai_cmd,
         ROOT / "test-artifacts" / "dev-ai.log",
     )
 
     # 再生成隐藏窗口启动器
-    write_vbs(RUN_DIR / "java-hidden.vbs", RUN_DIR / "java.cmd", ROOT / "services" / "java-api")
-    write_vbs(RUN_DIR / "ai-hidden.vbs", RUN_DIR / "ai.cmd", ROOT / "services" / "ai-api")
+    write_vbs(RUN_DIR / "java-hidden.vbs", RUN_DIR / "java.cmd", ROOT / "backend" / "java-api")
+    write_vbs(RUN_DIR / "ai-hidden.vbs", RUN_DIR / "ai.cmd", ROOT / "backend" / "ai-api")
 
     # 供 PowerShell 读取的关键参数
     meta = {

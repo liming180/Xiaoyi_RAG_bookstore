@@ -19,7 +19,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Root = Split-Path -Parent (Split-Path -Parent $ScriptDir)
+$Root = Split-Path -Parent $ScriptDir   # scripts/ 的上一级 = 项目根
 $RunDir = Join-Path $Root 'deploy\run'
 Set-Location $Root
 
@@ -97,10 +97,10 @@ if (-not $Python -or -not (Test-Path $Python)) {
 }
 Say "  Python: $Python" DarkGray
 
-$Jar = Join-Path $Root 'services\java-api\target\xiaoyi-rag-server-0.1.0-SNAPSHOT.jar'
+$Jar = Join-Path $Root 'backend\java-api\target\xiaoyi-rag-server-0.1.0-SNAPSHOT.jar'
 if (-not (Test-Path $Jar)) {
     Write-Host '[错误] 找不到后端 jar，请先构建：' -ForegroundColor Red
-    Write-Host '       cd services/java-api && mvn -DskipTests package' -ForegroundColor Yellow
+    Write-Host '       cd backend/java-api && mvn -DskipTests package' -ForegroundColor Yellow
     return 1
 }
 

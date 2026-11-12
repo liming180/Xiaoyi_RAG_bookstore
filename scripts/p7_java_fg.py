@@ -40,7 +40,7 @@ def main(env: dict[str, str] | None = None) -> int:
     with open(log_path, "ab") as log:
         proc = subprocess.Popen(
             cmd,
-            cwd=str(p7_up.REPO_ROOT / "services" / "java-api"),
+            cwd=str(p7_up.REPO_ROOT / "backend" / "java-api"),
             env=env,
             stdout=log,
             stderr=subprocess.STDOUT,

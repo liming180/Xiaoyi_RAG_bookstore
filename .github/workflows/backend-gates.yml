@@ -67,7 +67,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: services/ai-api/requirements.txt
+          cache-dependency-path: backend/ai-api/requirements.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -76,14 +76,14 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
 
       - name: Install Python dependencies
-        run: python -m pip install -r services/ai-api/requirements.txt -r tests/requirements-test.txt
+        run: python -m pip install -r backend/ai-api/requirements.txt -r tests/requirements-test.txt
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
       - name: Java unit and formatting gate
-        working-directory: services/java-api
+        working-directory: backend/java-api
         run: mvn -q verify
 
       - name: Start Python AI service (real provider)
@@ -95,7 +95,7 @@ jobs:
           STORAGE_ROOT: ${{ github.workspace }}/test-artifacts/ci-ai-storage
         run: |
           mkdir -p "$STORAGE_ROOT"
-          nohup python -m uvicorn app.main:app --app-dir services/ai-api --host 127.0.0.1 --port 8000 \
+          nohup python -m uvicorn app.main:app --app-dir backend/ai-api --host 127.0.0.1 --port 8000 \
             --timeout-keep-alive "$UVICORN_KEEP_ALIVE" > test-artifacts/ci-python.log 2>&1 &
           echo "$!" > test-artifacts/ci-python.pid
           python - <<'PY'
@@ -118,7 +118,7 @@ jobs:
         env:
           AI_MOCK: "false"
         run: |
-          mvn -q -DskipTests package -f services/java-api/pom.xml
+          mvn -q -DskipTests package -f backend/java-api/pom.xml
           python tests/scripts/serve_java.py --detach --db-name xiaoyi_rag_gate --profile gate-probe --log test-artifacts/ci-java-real.log
           echo "started java (real provider)"
 

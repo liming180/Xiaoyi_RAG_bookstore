@@ -25,8 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from p7_env import REPO_ROOT, load  # noqa: E402
 
-JAVA_JAR = REPO_ROOT / "services" / "java-api" / "target" / "xiaoyi-rag-server-0.1.0-SNAPSHOT.jar"
-AI_DIR = REPO_ROOT / "services" / "ai-api"
+JAVA_JAR = REPO_ROOT / "backend" / "java-api" / "target" / "xiaoyi-rag-server-0.1.0-SNAPSHOT.jar"
+AI_DIR = REPO_ROOT / "backend" / "ai-api"
 ARTIFACTS = REPO_ROOT / "test-artifacts"
 PIDS = ARTIFACTS / "p7-pids.json"
 BASE_JAVA = "http://127.0.0.1:8080"
@@ -142,7 +142,7 @@ def start_java(env: dict[str, str]) -> int:
         cmd.append(f"--spring.profiles.active={profiles}")
     proc = subprocess.Popen(
         cmd,
-        cwd=str(REPO_ROOT / "services" / "java-api"),
+        cwd=str(REPO_ROOT / "backend" / "java-api"),
         env=env,
         stdout=log,
         stderr=subprocess.STDOUT,

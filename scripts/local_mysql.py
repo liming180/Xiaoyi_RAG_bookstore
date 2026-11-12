@@ -243,7 +243,7 @@ def verify(cfg: dict[str, str]) -> dict[str, object]:
 def up(cfg: dict[str, str], timeout: float) -> int:
     validate(cfg, require_accounts=True)
     if not (p7_up.JAVA_JAR).exists():
-        raise RuntimeError("缺 Java jar：先 cd services/java-api && mvn -q -DskipTests package")
+        raise RuntimeError("缺 Java jar：先 cd backend/java-api && mvn -q -DskipTests package")
     # 上一次 up 留下的进程先收掉，否则 8000/8080 会端口冲突，
     # 且新起的 Java 会连到旧库/旧账号上，verify 时表现为登录 401。
     stale = read_state()

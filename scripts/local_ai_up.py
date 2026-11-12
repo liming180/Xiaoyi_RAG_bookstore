@@ -40,7 +40,7 @@ def main() -> int:
     ]
     print(f"[local-ai-up] storage={storage}", flush=True)
     print(f"[local-ai-up] token={cfg['INTERNAL_TOKEN'][:8]}...", flush=True)
-    return subprocess.call(cmd, cwd=str(ROOT / "services" / "ai-api"), env=env)
+    return subprocess.call(cmd, cwd=str(ROOT / "backend" / "ai-api"), env=env)
 
 
 if __name__ == "__main__":
