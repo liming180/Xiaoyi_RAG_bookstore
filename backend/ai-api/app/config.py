@@ -40,8 +40,22 @@ class Settings(BaseSettings):
 
     # ---- 向量库 ----
     # 空串 = 进程内内存实现（单测与 mock 档用）。真实环境填 http://milvus:19530。
+    #
+    # 兼容 milvus-lite：pymilvus 3.x 在 import 时就会解析同名环境变量 MILVUS_URI，
+    # 并强校验必须是 http(s):// 形式（见 pymilvus/orm/connections.py 的
+    # __parse_address_from_uri）。所以内嵌模式不能用 MILVUS_URI 传文件路径，
+    # 改由 XIAOYI_MILVUS_URI 传入，优先级更高；两者都没配才回落内存实现。
     milvus_uri: str = ""
     milvus_collection: str = "xiaoyi_chunks"
+
+    def resolved_milvus_uri(self) -> str:
+        """取实际使用的向量库地址。
+
+        优先 XIAOYI_MILVUS_URI（milvus-lite 的文件路径走这条），
+        其次才是的 MILVUS_URI（独立 Milvus 服务的 http 地址）。
+        """
+        import os as _os
+        return (_os.getenv("XIAOYI_MILVUS_URI") or self.milvus_uri).strip()
 
     # Milvus 凭据。开启 authorizationEnabled 后必须给，否则连接被拒（code=2）。
     # 默认留空 = 不带凭据连接（兼容未开鉴权的本地环境与 CI）。

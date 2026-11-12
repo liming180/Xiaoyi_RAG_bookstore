@@ -169,7 +169,9 @@ class MilvusVectorStore(VectorStore):
     """Milvus 实现。集合名与维度由 settings 决定，首次使用时按需建集合。"""
 
     def __init__(self, settings: Settings) -> None:
-        self._uri = settings.milvus_uri
+        # 用 resolved_milvus_uri() 而不是直接读 settings.milvus_uri：
+        # 前者兼容 XIAOYI_MILVUS_URI（milvus-lite 的文件路径）。
+        self._uri = settings.resolved_milvus_uri()
         self._collection = settings.milvus_collection
         self._user = settings.milvus_user
         self._password = settings.milvus_password
@@ -197,6 +199,35 @@ class MilvusVectorStore(VectorStore):
         else:
             self._client = MilvusClient(uri=self._uri)
         return self._client
+
+    def _ensure_loaded(self) -> Any:
+        """确保 collection 处于 loaded 状态后再返回 client。
+
+        为什么必须做：milvus-lite（内嵌模式）在进程重启后会把 collection 置为
+        released，此时直接 search/get/query 会抛
+        `code=101, Collection is in state 'released'; call load() before search`
+        （独立 Milvus 服务端通常有自动加载策略，所以以前没暴露这个问题）。
+        这里统一 load 一次，幂等，已 loaded 时开销可忽略。
+        """
+        client = self._ensure_client()
+        if not client.has_collection(self._collection):
+            return None
+        try:
+            state = client.get_load_state(collection_name=self._collection)
+            # 兼容不同 pymilvus 版本返回结构：可能是 str，也可能是 {"state": ...}
+            raw = state.get("state") if isinstance(state, dict) else state
+            name = getattr(raw, "name", None) or str(raw)
+            if "Loaded" in name or "loaded" in name:
+                return client
+        except Exception:  # noqa: BLE001 - 拿不到状态就直接尝试 load
+            pass
+        try:
+            client.load_collection(collection_name=self._collection)
+        except Exception as exc:  # noqa: BLE001
+            # 并发 load 时可能报 already loaded，忽略即可
+            if "already" not in str(exc).lower():
+                raise
+        return client
 
     def ensure(self, dim: int) -> None:
         if dim <= 0:
@@ -292,8 +323,8 @@ class MilvusVectorStore(VectorStore):
         doc_ids: Iterable[str] | None = None,
         kind: str | None = None,
     ) -> list[dict[str, Any]]:
-        client = self._ensure_client()
-        if not client.has_collection(self._collection):
+        client = self._ensure_loaded()
+        if client is None:
             return []
         hits = client.search(
             collection_name=self._collection,
@@ -314,8 +345,8 @@ class MilvusVectorStore(VectorStore):
         ]
 
     def count(self, user_id: int, task_id: str | None = None) -> int:
-        client = self._ensure_client()
-        if not client.has_collection(self._collection):
+        client = self._ensure_loaded()
+        if client is None:
             return 0
         expression = f"user_id == {int(user_id)}"
         if task_id is not None:
@@ -332,6 +363,6 @@ class MilvusVectorStore(VectorStore):
 
 def store_from_settings(settings: Settings) -> VectorStore:
     """有 MILVUS_URI 就用 Milvus，否则回落到内存实现（离线门禁）。"""
-    if settings.milvus_uri.strip():
+    if settings.resolved_milvus_uri():
         return MilvusVectorStore(settings)
     return MemoryVectorStore()

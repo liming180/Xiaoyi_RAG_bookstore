@@ -37,7 +37,16 @@ AI_PROVIDER = {
     "LLM_ENDPOINT": "https://open.bigmodel.cn/api/paas/v4",
     "LLM_MODEL": "glm-4-flash",
         "LLM_TIMEOUT_MS": "60000",
-    "MILVUS_URI": "http://127.0.0.1:19530",
+    # 向量库：milvus-lite（纯 Python 内嵌，无需 Docker）。
+    #
+    # 注意变量名：不能用 MILVUS_URI 传文件路径。
+    # pymilvus 3.x 在 import 阶段就会解析 MILVUS_URI 并强制校验成 http(s):// 形式
+    # （pymilvus/orm/connections.py 的 __parse_address_from_uri），传路径会直接抛
+    # ConnectionConfigException。所以内嵌模式走 XIAOYI_MILVUS_URI，
+    # 由 app/config.py 的 resolved_milvus_uri() 读取。
+    #
+    # 想改回独立 Milvus 服务：把这个键删掉，改配 MILVUS_URI=http://127.0.0.1:19530。
+    "XIAOYI_MILVUS_URI": str(ROOT / "test-artifacts" / "milvus-lite" / "xiaoyi.db"),
     "MILVUS_COLLECTION": "xiaoyi_chunks",
     "INGEST_STAGE_DELAY_MS": "0",
 }
@@ -78,6 +87,7 @@ KEEP_ENV_KEYS = (
     "LLM_API_KEY",
     "LLM_TIMEOUT_MS",
     "MILVUS_URI",
+    "XIAOYI_MILVUS_URI",
     "MILVUS_COLLECTION",
     "PYTHONIOENCODING",
     "PYTHONUTF8",
