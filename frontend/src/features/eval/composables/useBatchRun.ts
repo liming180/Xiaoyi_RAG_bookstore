@@ -3,7 +3,7 @@ import type { AnswerMode, EvalCaseResult, EvalQuestion, EvalRun, EvalRunSummary,
 import * as evalApi from '@/api/modules/eval';
 import { ApiError } from '@/api';
 import { EVAL_POLL_INTERVAL, K_DEFAULT } from '@/constants/app';
-import { summarize } from './batch';
+import { shufflePick, summarize } from './batch';
 
 /**
  * 批量对照测试的状态机（F09）。
@@ -17,6 +17,18 @@ export function useBatchRun() {
   const selectedIds = ref<string[]>([]);
   const mode = ref<AnswerMode>('both');
   const k = ref<number>(K_DEFAULT);
+
+  /**
+   * 题型开关（P5-08）：空数组 = 不限制题型。
+   *
+   * 与 selectedIds 是两条平行路径：勾了具体题号走精确点选；没勾但开了题型开关，
+   * 就交给服务端按题型筛选 —— 题库会持续增长，前端不该先拉全库再回传几百个题号。
+   */
+  const selectedTypes = ref<string[]>([]);
+
+  /** 数量模式：'all' = 全部筛选结果；'limit' = 随机抽 N 道 */
+  const countMode = ref<'all' | 'limit'>('all');
+  const limitCount = ref<number>(5);
 
   const run = ref<EvalRun | null>(null);
   const running = ref(false);
@@ -70,6 +82,21 @@ export function useBatchRun() {
     selectedIds.value = [];
   }
 
+  /** 切换题型开关：开/关就是把该题型加进/移出筛选集。 */
+  function toggleType(type: string): void {
+    selectedTypes.value = selectedTypes.value.includes(type)
+      ? selectedTypes.value.filter((x) => x !== type)
+      : [...selectedTypes.value, type];
+  }
+
+  /** 随机抽 n 道：调参时「跑一小批」比全量快得多，n 超界自动夹取。 */
+  function pickRandom(n: number): void {
+    selectedIds.value = shufflePick(
+      questions.value.map((q) => q.id),
+      n,
+    );
+  }
+
   /** 轮询到终态为止。run 已 SUCCEEDED 时立刻停，不留悬挂定时器。 */
   function startPolling(id: string): void {
     stopPolling();
@@ -93,16 +120,33 @@ export function useBatchRun() {
     }
   }
 
+  /**
+   * 发起一轮评测。
+   *
+   * <p>选题优先级：勾了具体题号 → 精确点选；没勾 → 按题型开关 + 数量模式交给服务端筛选。
+   * 两条路径互斥：用户勾了题就说明已经明确要测哪几道，此时题型开关不该再插手。
+   */
   async function start(): Promise<boolean> {
     if (running.value) return false;
-    if (selectedIds.value.length === 0) {
-      error.value = '请至少选择一道题';
+    const precise = selectedIds.value.length > 0;
+    if (!precise && selectedTypes.value.length === 0) {
+      error.value = '请至少勾选一道题，或打开一个题型开关';
       return false;
     }
     error.value = null;
     running.value = true;
     try {
-      const created = await evalApi.startBatch({ questionIds: selectedIds.value, mode: mode.value, k: k.value });
+      const payload = precise
+        ? { questionIds: selectedIds.value, mode: mode.value, k: k.value }
+        : {
+            questionIds: [],
+            types: selectedTypes.value,
+            limit: countMode.value === 'limit' ? limitCount.value : null,
+            sample: countMode.value === 'limit',
+            mode: mode.value,
+            k: k.value,
+          };
+      const created = await evalApi.startBatch(payload);
       // 后端可能直接返回 SUCCEEDED（mock 就是这样），也可能返回 RUNNING；
       // 两种都要先拉一次详情，因为 POST 的响应里没有 cases。
       run.value = { ...created, cases: [] };
@@ -156,6 +200,9 @@ export function useBatchRun() {
     selectedIds,
     mode,
     k,
+    selectedTypes,
+    countMode,
+    limitCount,
     run,
     running,
     loading,
@@ -170,6 +217,8 @@ export function useBatchRun() {
     toggleQuestion,
     selectAll,
     selectNone,
+    pickRandom,
+    toggleType,
     start,
     loadHistory,
     openRun,

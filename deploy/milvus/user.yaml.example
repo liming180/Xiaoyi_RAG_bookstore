@@ -22,6 +22,24 @@
 #      写成 {'model': 'embedding-3'} 会被丢掉，智谱回
 #      400 {"error":{"code":"1214","message":"model:model cannot be empty."}}。
 
+# ---- 鉴权开关 ----
+# true 时 Milvus 要求每个连接都带 user/password（默认账号 root）。
+#
+# **默认密码是 `Milvus`，不是空字符串** —— 镜像 `/milvus/configs/milvus.yaml` 里
+# `common.security.defaultRootPassword: Milvus`。网上「on-premises 默认密码为空」的说法
+# 是旧版本，按空密码去连只会得到 code=2 的连接失败，看不出真实原因。
+#
+# 注意 `authorizationEnabled` 是**热加载**的（改文件约 10 秒生效，不必重启容器），
+# 所以顺序必须是「鉴权关闭时先设密码 → 再打开鉴权」。锁死后的补救见 tools/setup_milvus_auth.py。
+#
+# 推荐流程：
+#   python tools/setup_milvus_auth.py --status         # 先看现状
+#   python tools/setup_milvus_auth.py --set-password   # 鉴权关闭时设密码
+#   python tools/setup_milvus_auth.py --verify         # 确认鉴权生效
+common:
+  security:
+    authorizationEnabled: true
+
 credential:
   zhipu_apikey:
     apikey: <ZHIPU_API_KEY>

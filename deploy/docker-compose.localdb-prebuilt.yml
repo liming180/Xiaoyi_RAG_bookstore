@@ -50,6 +50,9 @@ services:
       # 宿主机直跑 uvicorn 时改成 http://127.0.0.1:19530。
       MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
       MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 开启 Milvus 鉴权后必填（镜像出厂默认密码是 "Milvus"，不是空串）
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
       # 向量化与生成走真实服务（默认智谱 open.bigmodel.cn 的 OpenAI 兼容端点）。
       # 设成 mock 时不打外网：向量用 sha256 派生的确定性假向量，回答用模板串。
       AI_PROVIDER: ${AI_PROVIDER:-real}

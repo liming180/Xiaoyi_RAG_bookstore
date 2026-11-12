@@ -49,6 +49,8 @@ export interface MockState {
   experiments: Record<string, Experiment>;
   experimentRuns: Record<string, ExperimentRun[]>;
   candidates: EvalCandidate[];
+  /** P5-08 题库：可变（真实后端同样可增删改，不再是只读常量） */
+  questions: EvalQuestion[];
   feedback: Record<string, 'up' | 'down'>;
   seq: number;
   /** 当前是否有实验在跑（409 互斥用） */
@@ -126,6 +128,8 @@ function initialState(): MockState {
       },
     ],
     feedback: {},
+    // P5-08 题库是可变数据；深拷贝一份，避免增删改污染 SEED_QUESTIONS 常量。
+    questions: SEED_QUESTIONS.map((q) => ({ ...q })),
     seq: 1000,
     experimentRunning: false,
     // 4 秒跑完一组参数实验：既能让进度条真的动起来，又不至于把测试拖长。
@@ -153,7 +157,15 @@ export function nextId(prefix: string): string {
 
 /* --------------------------------------------------------------- 工具 */
 
-export const QUESTIONS: EvalQuestion[] = SEED_QUESTIONS;
+/**
+ * 当前启用中的题库（P5-08）。
+ *
+ * 改成 getter 而不是常量导出：题库现在是可变数据，常量会把「首次读取那一刻的快照」
+ * 固化在模块上，之后新增/停用题都看不到。
+ */
+export function enabledQuestions(): EvalQuestion[] {
+  return state.questions.filter((q) => q.enabled !== false);
+}
 
 /** F09 判分：每个 | 分组至少命中一个 / 分隔的候选词 */
 export function judge(answer: string, keywords: string): boolean {
@@ -239,7 +251,7 @@ export function newRun(
 ): EvalRun {
   const id = nextId('run');
   const cases: EvalCaseResult[] = questionIds.map((qid) => {
-    const q = QUESTIONS.find((x) => x.id === qid);
+    const q = state.questions.find((x) => x.id === qid);
     const keywords = q?.keywords ?? '';
     const question = q?.question ?? qid;
     const ragAnswer = pickAnswer(question, k).content;

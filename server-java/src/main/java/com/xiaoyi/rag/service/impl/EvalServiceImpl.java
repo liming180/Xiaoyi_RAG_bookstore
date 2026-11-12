@@ -13,10 +13,8 @@ import com.xiaoyi.rag.model.vo.EvalQuestionVO;
 import com.xiaoyi.rag.model.vo.EvalRunVO;
 import com.xiaoyi.rag.repository.EvalRunRepository;
 import com.xiaoyi.rag.service.EvalService;
+import com.xiaoyi.rag.service.QuestionBankService;
 import jakarta.annotation.PostConstruct;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,13 +29,17 @@ public class EvalServiceImpl implements EvalService {
     private final AiServiceClient ai;
     private final EvalRunRepository repository;
     private final ObjectMapper mapper;
-    private final List<EvalQuestionVO> questions;
+    private final QuestionBankService bank;
 
-    public EvalServiceImpl(AiServiceClient ai, EvalRunRepository repository, ObjectMapper mapper) {
+    public EvalServiceImpl(
+            AiServiceClient ai,
+            EvalRunRepository repository,
+            ObjectMapper mapper,
+            QuestionBankService bank) {
         this.ai = ai;
         this.repository = repository;
         this.mapper = mapper;
-        this.questions = loadQuestions();
+        this.bank = bank;
     }
 
     /**
@@ -55,9 +57,15 @@ public class EvalServiceImpl implements EvalService {
         }
     }
 
+    /**
+     * 当前用户的题库（P5-08 起题库是用户数据，不再是全局共享的静态 CSV）。
+     *
+     * @param userId 归属用户
+     * @return 该用户启用中的题目
+     */
     @Override
-    public List<EvalQuestionVO> questions() {
-        return questions;
+    public List<EvalQuestionVO> questions(Long userId) {
+        return bank.listEnabled(userId);
     }
 
     @Override
@@ -68,22 +76,10 @@ public class EvalServiceImpl implements EvalService {
         int k = request.k();
         if (k < 1 || k > 10 || !List.of("both", "direct", "rag").contains(mode))
             throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "评测参数非法");
-        List<EvalQuestionVO> selected = new ArrayList<>();
-        if (request.questionIds() == null || request.questionIds().isEmpty())
-            selected.addAll(questions);
-        else
-            for (String id : request.questionIds()) {
-                EvalQuestionVO q =
-                        questions.stream()
-                                .filter(item -> item.id().equals(id))
-                                .findFirst()
-                                .orElseThrow(
-                                        () ->
-                                                new ApiException(
-                                                        ErrorCode.INVALID_PARAM.getCode(),
-                                                        "题目不存在: " + id));
-                if (!selected.contains(q)) selected.add(q);
-            }
+        List<EvalQuestionVO> selected = selectQuestions(userId, request);
+        if (selected.isEmpty()) {
+            throw new ApiException(ErrorCode.INVALID_PARAM.getCode(), "没有可评测的题目");
+        }
         EvalRun row = new EvalRun();
         row.setUserId(userId);
         row.setMode(mode);
@@ -98,6 +94,56 @@ public class EvalServiceImpl implements EvalService {
         Long owner = userId;
         Thread.startVirtualThread(() -> execute(owner, id, List.copyOf(selected)));
         return initial;
+    }
+
+    /**
+     * 按请求解析本次要测的题目（P5-08）。
+     *
+     * <p>两条路径：{@code questionIds} 非空走精确点选；否则按 {@code types} 筛选、{@code sample} 决定顺序、 {@code limit}
+     * 决定题数。题库会随时增长，所以筛选始终在服务端做，前端不需要先拉全库再回传题号。
+     *
+     * @param userId 归属用户
+     * @param request 评测请求
+     * @return 去重后的题目列表，保持请求顺序或题库顺序
+     */
+    private List<EvalQuestionVO> selectQuestions(Long userId, EvalBatchRequest request) {
+        List<EvalQuestionVO> enabled = bank.listEnabled(userId);
+        List<String> ids = request.questionIds();
+        if (ids != null && !ids.isEmpty()) {
+            List<EvalQuestionVO> picked = new ArrayList<>();
+            for (String raw : ids) {
+                String id = raw == null ? "" : raw.strip();
+                EvalQuestionVO question =
+                        enabled.stream()
+                                .filter(item -> item.id().equals(id))
+                                .findFirst()
+                                .orElseThrow(
+                                        () ->
+                                                new ApiException(
+                                                        ErrorCode.INVALID_PARAM.getCode(),
+                                                        "题目不存在: " + id));
+                if (!picked.contains(question)) picked.add(question);
+            }
+            return List.copyOf(picked);
+        }
+
+        List<String> types = request.types();
+        List<EvalQuestionVO> filtered =
+                types == null || types.isEmpty()
+                        ? new ArrayList<>(enabled)
+                        : enabled.stream()
+                                .filter(q -> types.contains(q.type()))
+                                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        if (Boolean.TRUE.equals(request.sample())) {
+            java.util.Collections.shuffle(filtered);
+        }
+
+        Integer limit = request.limit();
+        if (limit != null && limit > 0 && limit < filtered.size()) {
+            return List.copyOf(filtered.subList(0, limit));
+        }
+        return List.copyOf(filtered);
     }
 
     private void execute(Long userId, Long id, List<EvalQuestionVO> selected) {
@@ -258,14 +304,31 @@ public class EvalServiceImpl implements EvalService {
 
     public static boolean judge(String answer, String keywords) {
         if (keywords == null || keywords.isEmpty()) return false;
+        // 判分前抹掉两侧所有空白：真实 provider（glm-4-flash）习惯在中文与数字间加空格，
+        // 输出「最多借 4 本」「借期 21 天」，而题库关键词写的是 `4本` / `21天`。
+        // 不归一化就会把完全正确的答案判成未命中，passedRag 被系统性压低。
+        // 必须与 Python 侧 `routes._judge` 的 `_squash` 保持一致，否则两端结论会打架。
+        String normalized = squash(answer);
         for (String group : keywords.split("\\|", -1)) {
             boolean hit = false;
-            for (String alternative : group.split("/", -1))
-                if (!alternative.trim().isEmpty() && answer.contains(alternative.trim()))
-                    hit = true;
+            for (String alternative : group.split("/", -1)) {
+                String word = squash(alternative);
+                if (!word.isEmpty() && normalized.contains(word)) hit = true;
+            }
             if (!hit) return false;
         }
         return true;
+    }
+
+    /** 去掉所有空白字符（空格、全角空格、换行、制表符）；关键词本身不含空格。 */
+    private static String squash(String text) {
+        if (text == null) return "";
+        StringBuilder builder = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (!Character.isWhitespace(ch) && ch != '\u3000') builder.append(ch);
+        }
+        return builder.toString();
     }
 
     @Override
@@ -325,40 +388,6 @@ public class EvalServiceImpl implements EvalService {
                 row.getMode(),
                 row.getTopK(),
                 cases);
-    }
-
-    private List<EvalQuestionVO> loadQuestions() {
-        Map<String, String> keywords = new LinkedHashMap<>();
-        for (String[] row : readCsv("eval/keywords.csv")) keywords.put(row[0], row[1]);
-        List<EvalQuestionVO> result = new ArrayList<>();
-        for (String[] row : readCsv("eval/questions.csv")) {
-            String type =
-                    switch (row[1]) {
-                        case "单文档" -> "single";
-                        case "跨文档" -> "cross";
-                        case "库外" -> "out";
-                        default -> throw new IllegalStateException("题型错误");
-                    };
-            if (!keywords.containsKey(row[0])) throw new IllegalStateException("缺少判分关键词");
-            result.add(new EvalQuestionVO(row[0], type, row[2], keywords.get(row[0]), row[4]));
-        }
-        if (result.size() != 13) throw new IllegalStateException("题库应包含13题");
-        return List.copyOf(result);
-    }
-
-    private List<String[]> readCsv(String path) {
-        var stream = getClass().getClassLoader().getResourceAsStream(path);
-        if (stream == null) throw new IllegalStateException("缺少题库资源: " + path);
-        try (var reader =
-                new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            reader.readLine();
-            return reader.lines()
-                    .filter(line -> !line.isBlank())
-                    .map(line -> line.split(",", -1))
-                    .toList();
-        } catch (Exception error) {
-            throw new IllegalStateException("题库读取失败", error);
-        }
     }
 
     private String csv(List<EvalCaseResultVO> cases) {

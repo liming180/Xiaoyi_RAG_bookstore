@@ -105,7 +105,7 @@ class ExperimentParamsTest {
         when(experiments.findByIdAndUserId(1L, OWNER)).thenReturn(Optional.of(experiment));
         when(experiments.save(any())).thenAnswer(call -> call.getArgument(0));
         when(runs.save(any())).thenAnswer(call -> call.getArgument(0));
-        when(eval.questions())
+        when(eval.questions(anyLong()))
                 .thenReturn(List.of(new EvalQuestionVO("T01", "fact", "问题", "关键词", "asset")));
         when(eval.evaluate(anyLong(), any(), anyInt(), any()))
                 .thenAnswer(

@@ -58,3 +58,17 @@ test/storage/
 # ---- Milvus ----
 # deploy/milvus/user.yaml 含智谱 API key，只提交 user.yaml.example
 deploy/milvus/user.yaml
+
+# ---- 一键启动生成的启动器 ----
+# deploy/run/*.cmd 由 deploy/scripts/make_launchers.py 生成，
+# 里面固化了 MySQL 密码、JWT secret、内部令牌和智谱 API key，不能进库。
+# 启动后端时脚本会按需重新生成，无需提交。
+deploy/run/
+
+# ---- nginx 二进制（体积大、平台相关，按需下载） ----
+# 只提交我们自己的 conf/nginx.conf；nginx 程序本体（nginx.exe、内置 conf、
+# html 产物、logs、temp）不入库。新环境按 deploy/README-一键启动.md 下载解压即可。
+deploy/nginx-windows/nginx-1.27.4/
+deploy/nginx-windows/*.zip
+# html 是前端构建产物，同样不入库
+deploy/nginx-windows/html/

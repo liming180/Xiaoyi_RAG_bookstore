@@ -1,6 +1,6 @@
 """递归切片：按 Markdown 标题继承章节路径，再按段落 / 句子 / 硬切逐级回退。
 
-设计约束（来自 `docs/02-重构设计/04_后端开发提示词.md` A2 段与
+设计约束（来自 `docs/02-重构设计/RAG文档.md` §4 离线管线与
 `docs/api/openapi-internal.yaml` 的 InternalCitation）：
 
 * 每个切片必须带可读的 `heading_path`，不能是固定占位串；

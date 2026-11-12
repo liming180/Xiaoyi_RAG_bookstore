@@ -47,6 +47,135 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 用户分页列表
+         * @description 默认只返回未软删（`deleted=false`）的账号。`keyword` 对 username 做前缀匹配、
+         *     对 displayName 做包含匹配。管理员行恒在首位（按 createdAt 升序）。
+         *     非管理员调用返回 HTTP 403 / `40101`（不会触发前端登出）。
+         */
+        get: operations["adminListUsers"];
+        put?: never;
+        /**
+         * 新建用户
+         * @description 只能创建普通用户（role 恒为 `USER`）。请求体**不接受 `role` 字段**：
+         *     传了就是 40001，这是「全系统只有一个管理员」的第二道闸。
+         *
+         *     `password` 长度按 **UTF-8 字节** 校验 12–72（中文 1 字按 3 字节计）。
+         *     `username` 唯一性包含软删行：软删行的名字仍然占着唯一键。
+         */
+        post: operations["adminCreateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 编辑用户显示名
+         * @description 只改显示名，不含密码（改密码走 `PUT /admin/users/{id}/password`）。
+         *     对管理员自己（id = 当前 ADMIN 的 id）返回 40906 —— 唯一管理员不能改自己。
+         */
+        put: operations["adminUpdateUser"];
+        post?: never;
+        /**
+         * 删除用户（软删）
+         * @description 软删：`deleted=1`，该账号立即无法登录，历史会话与资料保留（归属关系不变）。
+         *     对管理员自己返回 40906。
+         */
+        delete: operations["adminDeleteUser"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{id}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 重置用户密码
+         * @description 管理员直接设置新密码（不需要旧密码）。独立端点是为了单独留审计痕迹：
+         *     `audit_log` 里记 `admin.user.reset-password`，且只记「已变更」不记值。
+         *     对管理员自己返回 40906。
+         */
+        put: operations["adminResetUserPassword"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 审计日志分页查询（只读）
+         * @description 管理端操作账本：谁在什么时候对哪个账号做了什么。按 `id` 倒序（最新在前）。
+         *
+         *     三个过滤条件都精确/包含匹配，互不耦合，可任意组合：
+         *     - `action` 精确匹配动作名（如 `admin.user.create`）；
+         *     - `operatorId` 精确匹配操作者 id；
+         *     - `keyword` 对 `target` 做包含匹配（如 `user:7` 查某账号的全部操作史）。
+         *
+         *     `operatorName` 由服务端联表解析；操作者已不存在时为 `null`（前端显示占位而不是报错）。
+         *     `detailJson` 是**写入当时**的快照原文，不做二次解释。
+         *
+         *     非管理员调用返回 HTTP 403 / `40101`。本接口没有任何写操作。
+         */
+        get: operations["adminListAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit-logs/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 出现过的动作名（筛选下拉用）
+         * @description 返回库里实际出现过的 `action` 去重排序列表。前端用它渲染筛选下拉，
+         *     而不是在页面里硬编码一份——新增业务动作时下拉自动出现，不会因为页面漏写一项而漏筛。
+         */
+        get: operations["adminListAuditActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/conversations": {
         parameters: {
             query?: never;
@@ -595,6 +724,19 @@ export interface components {
         ResultUserInfo: components["schemas"]["Envelope"] & {
             data: components["schemas"]["UserInfo"];
         };
+        ResultAdminUserItem: components["schemas"]["Envelope"] & {
+            data: components["schemas"]["AdminUserItem"];
+        };
+        ResultAdminUserPage: components["schemas"]["Envelope"] & {
+            data: components["schemas"]["AdminUserPage"];
+        };
+        ResultAdminAuditPage: components["schemas"]["Envelope"] & {
+            data: components["schemas"]["AdminAuditPage"];
+        };
+        /** @description 成功信封，`data` 为字符串数组（动作名列表等简单枚举）。 */
+        ResultStringList: components["schemas"]["Envelope"] & {
+            data: string[];
+        };
         ResultConversation: components["schemas"]["Envelope"] & {
             data: components["schemas"]["Conversation"];
         };
@@ -658,8 +800,82 @@ export interface components {
             /** @description 用户主键 */
             id: number;
             username: string;
-            /** @description 展示名；`demo` 映射为「演示用户」 */
+            /** @description 展示名；未设置时回退为 username。`demo` 映射为「演示用户」 */
             displayName: string;
+            /**
+             * @description 角色。`ADMIN` 全系统唯一（管理端账号），决定登录后落管理端还是用户端。
+             *     取值由服务端给出，前端只读。
+             * @enum {string}
+             */
+            role: "ADMIN" | "USER";
+        };
+        /** @description 管理端用户行。**不含任何密码字段**（哈希永不出接口）。 */
+        AdminUserItem: {
+            id: number;
+            username: string;
+            /** @description NULL 时前端回退显示 username */
+            displayName: string | null;
+            /**
+             * @description 只读。创建接口无法产生第二个 ADMIN
+             * @enum {string}
+             */
+            role: "ADMIN" | "USER";
+            /** @description 软删标记。软删账号不能登录，默认不出现在列表 */
+            deleted: boolean;
+            /** @description 创建时间（Unix 秒） */
+            createdAt: number;
+        };
+        AdminUserPage: {
+            items: components["schemas"]["AdminUserItem"][];
+            /** @description 过滤后的总条数 */
+            total: number;
+            /** @description 当前页（从 1 开始） */
+            page: number;
+            /** @description 每页条数（最多 100） */
+            size: number;
+        };
+        /**
+         * @description 新建用户。**没有 `role` 字段**：多传一个 `role` 就是 40001 ——
+         *     这是「全系统只有一个管理员」的接口层保证。
+         */
+        AdminUserCreateRequest: {
+            /** @description 登录名。唯一性包含软删行，创建后不可修改 */
+            username: string;
+            /** @description 12–72 个 UTF-8 字节（中文 1 字按 3 字节计） */
+            password: string;
+            /** @description 可省略；空串等价于不设置（列表回退显示 username） */
+            displayName?: string | null;
+        };
+        /** @description 只改显示名。改密码走 /admin/users/{id}/password */
+        AdminUserUpdateRequest: {
+            /** @description 空串表示清空 → 存 NULL，列表回退显示 username */
+            displayName: string | null;
+        };
+        AdminUserPasswordRequest: {
+            /** @description 12–72 个 UTF-8 字节。不要求旧密码（管理员重置他人密码的场景没有旧密码） */
+            newPassword: string;
+        };
+        /** @description 审计日志行。只读；`detailJson` 是写入当时的快照原文。 */
+        AdminAuditItem: {
+            id: number;
+            /** @description 操作者 id；历史行可能为 null */
+            operatorId: number | null;
+            /** @description 操作者 username（服务端联表解析）；账号不存在时为 null */
+            operatorName: string | null;
+            /** @description 动作名，如 admin.user.create / admin.user.reset-password */
+            action: string;
+            /** @description 操作对象，如 user:7 */
+            target: string | null;
+            /** @description 详情 JSON 原文。**不含任何密码明文或哈希**，密码类字段只记 "changed" */
+            detailJson: string | null;
+            /** @description 发生时间（Unix 秒） */
+            createdAt: number;
+        };
+        AdminAuditPage: {
+            items: components["schemas"]["AdminAuditItem"][];
+            total: number;
+            page: number;
+            size: number;
         };
         LoginRequest: {
             username: string;
@@ -1150,6 +1366,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description 已认证但无权限（HTTP 403）。仅管理端路径会产生：非 ADMIN 或账号已软删。 */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
         /** @description 业务冲突（HTTP 409） */
         Conflict: {
             headers: {
@@ -1193,6 +1418,8 @@ export interface components {
         CandidateId: string;
         /** @description 实验 id */
         ExperimentId: string;
+        /** @description 用户主键（数据库自增，正整数）。软删行按「不存在」处理（40409） */
+        UserIdPath: number;
     };
     requestBodies: never;
     headers: never;
@@ -1245,6 +1472,218 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminListUsers: {
+        parameters: {
+            query?: {
+                page?: number;
+                /** @description 上限 100；超出按 100 处理（不报错） */
+                size?: number;
+                /** @description 空或空白等同于不过滤 */
+                keyword?: string;
+                /** @description 仅排障用；true 时结果含软删行 */
+                includeDeleted?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分页结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultAdminUserPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminCreateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultAdminUserItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminUpdateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 用户主键（数据库自增，正整数）。软删行按「不存在」处理（40409） */
+                id: components["parameters"]["UserIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultAdminUserItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminDeleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 用户主键（数据库自增，正整数）。软删行按「不存在」处理（40409） */
+                id: components["parameters"]["UserIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultVoid"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminResetUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 用户主键（数据库自增，正整数）。软删行按「不存在」处理（40409） */
+                id: components["parameters"]["UserIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description 已重置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultAdminUserItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminListAuditLogs: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+                /** @description 动作名精确匹配；空或空白等同于不过滤 */
+                action?: string;
+                /** @description 操作者 id 精确匹配 */
+                operatorId?: number;
+                /** @description 对 target 做包含匹配 */
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分页结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultAdminAuditPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminListAuditActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 动作名数组 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultStringList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalError"];
         };
     };

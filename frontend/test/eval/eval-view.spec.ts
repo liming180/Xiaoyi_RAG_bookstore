@@ -168,20 +168,31 @@ describe('评测页（P5）', () => {
     );
 
     expect(wrapper.get('[data-testid="tab-history"]').attributes('aria-selected')).toBe('true');
-    // 历史页签本身不渲染批量面板；只有点「查看」后才在下方挂出详情
-    expect(wrapper.find('[data-testid="history-detail"]').exists()).toBe(false);
+    // 历史页签本身不渲染批量面板；只有点「查看详情」后才在该卡片下方就地展开结果表
+    expect(wrapper.find('[data-testid^="history-detail-"]').exists()).toBe(false);
 
-    // 点「查看」把详情加载到下方
+    // 点「查看详情」把结果表内联展开到卡片下方
     const openBtn = wrapper.get('[data-testid^="history-open-"]');
     await openBtn.trigger('click');
     await waitFor(
-      () => wrapper.find('[data-testid="history-detail"]').exists(),
+      () => wrapper.find('[data-testid^="history-detail-"]').exists(),
       8000,
       '历史详情',
     );
     expect(
-      wrapper.get('[data-testid="history-detail"]').findAll('[data-testid^="case-"]'),
+      wrapper.get('[data-testid^="history-detail-"]').findAll('[data-testid^="case-"]'),
     ).toHaveLength(QUESTION_COUNT);
+
+    /*
+     * 详情里不应再出现「跑测试」的控件：
+     * 原实现把整个 BatchRunner 塞进详情，选题面板（pick-*）、开始测试按钮
+     * 和历史记录混在一起，既误导（以为能改这次结果）又要滚很久才看到结果。
+     */
+    const detail = wrapper.get('[data-testid^="history-detail-"]');
+    expect(detail.find('[data-testid="batch-start"]').exists()).toBe(false);
+    expect(detail.find('[data-testid^="pick-"]').exists()).toBe(false);
+    // 结果表本体仍在
+    expect(detail.find('[data-testid="history-result"]').exists()).toBe(true);
   });
 
   it('候选池：纳入要先补关键词（可留空）/ 忽略直接生效，且「只看待定」把已处理的藏起来', async () => {

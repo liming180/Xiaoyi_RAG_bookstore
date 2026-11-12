@@ -69,6 +69,9 @@ services:
       # http://milvus:19530 并给本服务加 external 网络。
       MILVUS_URI: ${MILVUS_URI:-http://host.docker.internal:19530}
       MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 开启 Milvus 鉴权后必填（镜像出厂默认密码是 "Milvus"，不是空串）
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

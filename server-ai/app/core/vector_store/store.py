@@ -171,6 +171,8 @@ class MilvusVectorStore(VectorStore):
     def __init__(self, settings: Settings) -> None:
         self._uri = settings.milvus_uri
         self._collection = settings.milvus_collection
+        self._user = settings.milvus_user
+        self._password = settings.milvus_password
         self._client: Any = None
         self._dim = 0
 
@@ -186,7 +188,14 @@ class MilvusVectorStore(VectorStore):
                 "AI_PROVIDER=real 且配置了 MILVUS_URI，但当前环境没有 pymilvus；"
                 "请把 pymilvus 加进 requirements 或改用 mock 档"
             ) from exc
-        self._client = MilvusClient(uri=self._uri)
+        # 只有两个都给了才传凭据：Milvus 未开鉴权时多传反而可能被拒，
+        # 而未配 MILVUS_USER/PASSWORD 的本地环境与 CI 应当照常工作。
+        if self._user and self._password:
+            self._client = MilvusClient(
+                uri=self._uri, user=self._user, password=self._password
+            )
+        else:
+            self._client = MilvusClient(uri=self._uri)
         return self._client
 
     def ensure(self, dim: int) -> None:

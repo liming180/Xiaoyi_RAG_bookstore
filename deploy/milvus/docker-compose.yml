@@ -91,6 +91,11 @@ services:
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin2026}
+      # 只影响「全新数据卷首次初始化」时 root 的初始密码；已有数据卷不会重置。
+      # 镜像出厂默认是 "Milvus"（不是空串），这里显式给成项目密码，省掉一次改密码。
+      # 改了这里但数据卷已存在 → 不生效，需要走 tools/setup_milvus_auth.py --set-password。
+      # 不写默认值：密码只在 deploy/local-mysql.env（已 gitignore）里维护一份。
+      MILVUS_ROOT_PASSWORD: ${MILVUS_PASSWORD:-}
     command: milvus run standalone
     ports:
       - "${MILVUS_PORT:-19530}:19530"
@@ -120,6 +125,12 @@ services:
       - "${ATTU_PORT:-3000}:3000"
     environment:
       - MILVUS_ADDRESS=milvus:19530
+      # Milvus 开启 authorizationEnabled 后，Attu 连接也要带凭据，否则连上去也是一片空。
+      # 浏览器打开 http://localhost:3000 会先看到 Attu 自己的登录页（HTTP 401 就是它），
+      # 在那里填 MILVUS_USER / MILVUS_PASSWORD 即可 —— 这两个变量是给容器内的默认值用的，
+      # 前端仍然以登录框输入为准（新开浏览器 / 清缓存后需要再填一次）。
+      - MILVUS_USER=${MILVUS_USER:-root}
+      - MILVUS_PASSWORD=${MILVUS_PASSWORD:-}
     volumes:
       - attu-data:/data
     depends_on:

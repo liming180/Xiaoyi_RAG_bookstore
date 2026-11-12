@@ -56,6 +56,9 @@ services:
       # Milvus 在 deploy/milvus/docker-compose.yml 里，共用 xiaoyi-net 网络。
       MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
       MILVUS_COLLECTION: ${MILVUS_COLLECTION:-xiaoyi_chunks}
+      # 开启 Milvus 鉴权后必填（镜像出厂默认密码是 "Milvus"，不是空串）
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
     volumes:
       - ai-state:/var/lib/xiaoyi-ai
     networks:

@@ -26,11 +26,19 @@ public class User {
     @Column(name = "username", nullable = false, length = 64)
     private String username;
 
+    /** 显示名。NULL 时前端回退显示 username（V11 新增）。 */
+    @Column(name = "display_name", length = 64)
+    private String displayName;
+
     @Column(name = "password_hash", nullable = false, length = 128)
     private String passwordHash;
 
     @Column(name = "role", nullable = false, length = 32)
     private String role;
+
+    /** 软删标记（V11 新增）。软删后不能登录，也不能再被管理端操作。 */
+    @Column(name = "deleted", nullable = false)
+    private Boolean deleted;
 
     @Column(name = "created_at", nullable = false)
     private Long createdAt;
@@ -46,6 +54,9 @@ public class User {
         }
         if (role == null || role.isBlank()) {
             role = "USER";
+        }
+        if (deleted == null) {
+            deleted = Boolean.FALSE;
         }
     }
 
@@ -65,6 +76,14 @@ public class User {
         this.username = username;
     }
 
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }
+
     public String getPasswordHash() {
         return passwordHash;
     }
@@ -79,6 +98,14 @@ public class User {
 
     public void setRole(String role) {
         this.role = role;
+    }
+
+    public Boolean getDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(Boolean deleted) {
+        this.deleted = deleted;
     }
 
     public Long getCreatedAt() {

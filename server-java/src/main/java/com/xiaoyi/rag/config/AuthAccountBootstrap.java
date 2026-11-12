@@ -10,7 +10,20 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Optional environment-controlled provisioning, never an HTTP registration endpoint. */
+/**
+ * Optional environment-controlled provisioning, never an HTTP registration endpoint.
+ *
+ * <p>V11 起两个 bootstrap 账号的角色不同：
+ *
+ * <ul>
+ *   <li><b>主账号</b>（{@code AUTH_BOOTSTRAP_USERNAME}）→ {@code ADMIN}，即管理端唯一账号。 已存在但还不是 ADMIN
+ *       时幂等升级（部署可能先用旧版本建过这个号）。
+ *   <li><b>次账号</b>（{@code AUTH_SECONDARY_BOOTSTRAP_USERNAME}）→ {@code USER}，用于 H2 的 A/B 隔离测试。
+ * </ul>
+ *
+ * <p>V6 迁移插入的 demo 行（{@code password_hash} 是字面量 {@code 'demo'}）只允许在显式 demo profile 下被 收养改密，且永远是
+ * {@code USER} —— demo 账号不许升成管理员。
+ */
 @Component
 public class AuthAccountBootstrap implements ApplicationRunner {
     private final UserRepository users;
@@ -28,11 +41,12 @@ public class AuthAccountBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        provision(auth.getBootstrapUsername(), auth.getBootstrapPassword());
-        provision(auth.getSecondaryBootstrapUsername(), auth.getSecondaryBootstrapPassword());
+        provision(auth.getBootstrapUsername(), auth.getBootstrapPassword(), "ADMIN");
+        provision(
+                auth.getSecondaryBootstrapUsername(), auth.getSecondaryBootstrapPassword(), "USER");
     }
 
-    private void provision(String username, String password) {
+    private void provision(String username, String password, String role) {
         boolean hasName = username != null && !username.isBlank();
         boolean hasPassword = password != null && !password.isBlank();
         if (!hasName && !hasPassword) {
@@ -46,7 +60,7 @@ public class AuthAccountBootstrap implements ApplicationRunner {
             throw new IllegalStateException(
                     "Bootstrap requires username (1..64 chars) and password (12..72 UTF-8 bytes)");
         }
-        User user = users.findByUsername(username.trim()).orElse(null);
+        User user = users.findAnyByUsername(username.trim()).orElse(null);
         if (user != null) {
             // Historical migrations seeded the literal 'demo', which is not a password hash.
             // Only an explicit demo deployment may adopt that row using an operator-supplied
@@ -55,12 +69,19 @@ public class AuthAccountBootstrap implements ApplicationRunner {
                 user.setPasswordHash(passwords.encode(password));
                 users.save(user);
             }
+            // 幂等升级：主账号在旧版本里被建成 USER，这里补成 ADMIN。
+            // 只升不降（role 已是 ADMIN 就不动），重跑多少次结果都一样。
+            if ("ADMIN".equals(role) && !"ADMIN".equals(user.getRole())) {
+                user.setRole("ADMIN");
+                users.save(user);
+            }
             return;
         }
         user = new User();
         user.setUsername(username.trim());
         user.setPasswordHash(passwords.encode(password));
-        user.setRole("USER");
+        user.setRole(role);
+        user.setDeleted(Boolean.FALSE);
         users.save(user);
     }
 }

@@ -289,23 +289,30 @@ export function seedTrace(question: string, k: number, chunkSize = 180, overlap 
   }));
 }
 
+/**
+ * 内置种子题库（mock）。
+ *
+ * 题型字段用后端的码（single/cross/out）而不是中文：P5-08 起真实后端返回的
+ * `type` 就是码值，mock 若继续用「单文档」会让前端类型分支在 mock 与真实后端上
+ * 走出两条不同的路 —— 那些只在 mock 下能过的测试会掩盖真实回归。
+ */
 export const SEED_QUESTIONS: EvalQuestion[] = [
-  { id: 'T01', type: '单文档', question: '读书会通常在每周几几点举行？', keywords: '周六|14:00/14点|16:00/16点', evidence: '01_活动说明.md' },
-  { id: 'T02', type: '单文档', question: '报名最晚什么时候完成？', keywords: '周五|18:00/18点', evidence: '01_活动说明.md' },
-  { id: 'T03', type: '单文档', question: '普通图书最多同时借阅几本借多久？', keywords: '4本/四本|21天/二十一天', evidence: '02_借阅规则.md' },
-  { id: 'T04', type: '单文档', question: '已经被别人预约的图书还能续借吗？', keywords: '不能/不可以/不可/无法', evidence: '02_借阅规则.md' },
-  { id: 'T05', type: '单文档', question: '讨论空间需要几人每次最长多久？', keywords: '3/三|6/六|2小时/两小时', evidence: '03_空间预约.md' },
-  { id: 'T06', type: '单文档', question: '预约的空间不能使用应提前多久取消？', keywords: '30分钟/半小时/三十分钟', evidence: '03_空间预约.md' },
-  { id: 'T07', type: '跨文档', question: '去参加周六读书会活动几点结束同时最多能借几本普通图书？', keywords: '16:00/16点|4本/四本', evidence: '01_活动说明.md与02_借阅规则.md' },
-  { id: 'T08', type: '跨文档', question: '报名读书会的截止时间和空间预约可提前的天数分别是什么？', keywords: '周五|18:00/18点|2天/两天', evidence: '01_活动说明.md与03_空间预约.md' },
-  { id: 'T09', type: '库外', question: '参加读书会要交多少费用？', keywords: '未提供/没有提供/未说明/没有说明/未包含/不包含/不涉及/没有涉及/未提及/没有提及/无法确定/没有相关', evidence: '无' },
-  { id: 'T10', type: '库外', question: '管理员的联系电话是多少？', keywords: '未提供/没有提供/未说明/没有说明/未包含/不包含/不涉及/没有涉及/未提及/没有提及/无法确定/没有相关', evidence: '无' },
+  { id: 'T01', type: 'single', enabled: true, source: 'seed', question: '读书会通常在每周几几点举行？', keywords: '周六|14:00/14点|16:00/16点', evidence: '01_活动说明.md' },
+  { id: 'T02', type: 'single', enabled: true, source: 'seed', question: '报名最晚什么时候完成？', keywords: '周五|18:00/18点', evidence: '01_活动说明.md' },
+  { id: 'T03', type: 'single', enabled: true, source: 'seed', question: '普通图书最多同时借阅几本借多久？', keywords: '4本/四本|21天/二十一天', evidence: '02_借阅规则.md' },
+  { id: 'T04', type: 'single', enabled: true, source: 'seed', question: '已经被别人预约的图书还能续借吗？', keywords: '不能/不可以/不可/无法', evidence: '02_借阅规则.md' },
+  { id: 'T05', type: 'single', enabled: true, source: 'seed', question: '讨论空间需要几人每次最长多久？', keywords: '3/三|6/六|2小时/两小时', evidence: '03_空间预约.md' },
+  { id: 'T06', type: 'single', enabled: true, source: 'seed', question: '预约的空间不能使用应提前多久取消？', keywords: '30分钟/半小时/三十分钟', evidence: '03_空间预约.md' },
+  { id: 'T07', type: 'cross', enabled: true, source: 'seed', question: '去参加周六读书会活动几点结束同时最多能借几本普通图书？', keywords: '16:00/16点|4本/四本', evidence: '01_活动说明.md与02_借阅规则.md' },
+  { id: 'T08', type: 'cross', enabled: true, source: 'seed', question: '报名读书会的截止时间和空间预约可提前的天数分别是什么？', keywords: '周五|18:00/18点|2天/两天', evidence: '01_活动说明.md与03_空间预约.md' },
+  { id: 'T09', type: 'out', enabled: true, source: 'seed', question: '参加读书会要交多少费用？', keywords: '未提供/没有提供/未说明/没有说明/未包含/不包含/不涉及/没有涉及/未提及/没有提及/无法确定/没有相关', evidence: '无' },
+  { id: 'T10', type: 'out', enabled: true, source: 'seed', question: '管理员的联系电话是多少？', keywords: '未提供/没有提供/未说明/没有说明/未包含/不包含/不涉及/没有涉及/未提及/没有提及/无法确定/没有相关', evidence: '无' },
   // T11–T13 覆盖 04/05/06 三份资料：原 10 题只覆盖 01/02/03，
   // 「评测覆盖六份资料」这句话在 T11–T13 补齐前站不住。
-  { id: 'T11', type: '单文档', question: '期刊最多同时借几本借期多久？', keywords: '2本/两本/二本|7天/七天', evidence: '04_期刊与工具书.md' },
-  { id: 'T12', type: '跨文档', question: '2026年11月14日那一周的读书会和平时相比开始时间与地点有什么变化？', keywords: '周日/星期日/星期天/礼拜天|15:00/15点/下午3点/下午三点|多功能厅/一层多功能厅', evidence: '05_活动调整通知.md与01_活动说明.md' },
+  { id: 'T11', type: 'single', enabled: true, source: 'seed', question: '期刊最多同时借几本借期多久？', keywords: '2本/两本/二本|7天/七天', evidence: '04_期刊与工具书.md' },
+  { id: 'T12', type: 'cross', enabled: true, source: 'seed', question: '2026年11月14日那一周的读书会和平时相比开始时间与地点有什么变化？', keywords: '周日/星期日/星期天/礼拜天|15:00/15点/下午3点/下午三点|多功能厅/一层多功能厅', evidence: '05_活动调整通知.md与01_活动说明.md' },
   // T13 第一组关键词要求「明确否定」：只答「最多 4 本」而不否认「6 本」不算过
-  { id: 'T13', type: '跨文档', question: '听说老成员可以同时借6本普通图书是这样吗？', keywords: '不是/并非/不可以/不能/不正确/错误|4本/四本', evidence: '06_成员留言摘录.md与02_借阅规则.md' },
+  { id: 'T13', type: 'cross', enabled: true, source: 'seed', question: '听说老成员可以同时借6本普通图书是这样吗？', keywords: '不是/并非/不可以/不能/不正确/错误|4本/四本', evidence: '06_成员留言摘录.md与02_借阅规则.md' },
 ];
 
 export const SEED_SUGGESTIONS = ['续借可以加几天？', '讨论空间能提前几天预约？', '报名截止是什么时候？'];

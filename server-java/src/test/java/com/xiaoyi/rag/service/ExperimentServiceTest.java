@@ -3,6 +3,7 @@ package com.xiaoyi.rag.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -103,7 +104,7 @@ class ExperimentServiceTest {
         // H2 之后所有按 id 取行的路径都带归属：只 stub 全局 findById 会落到 40405。
         when(experiments.findByIdAndUserId(1L, OWNER))
                 .thenReturn(java.util.Optional.of(experiment));
-        when(eval.questions()).thenThrow(new IllegalStateException("provider failure"));
+        when(eval.questions(anyLong())).thenThrow(new IllegalStateException("provider failure"));
         CountDownLatch finished = new CountDownLatch(1);
         doAnswer(
                         invocation -> {

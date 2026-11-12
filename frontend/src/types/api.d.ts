@@ -46,6 +46,72 @@ export interface UserInfo {
   id: number;
   username: string;
   displayName: string;
+  /** 角色。ADMIN 唯一，决定登录后落管理端还是用户端（V11 新增） */
+  role: UserRole;
+}
+
+/** 系统角色。ADMIN 全系统只有一个账号，且不提供创建入口。 */
+export type UserRole = 'ADMIN' | 'USER';
+
+/* -------------------------------------------------------- 管理端用户管理 */
+
+/** 管理端用户行（AdminUserItem） */
+export interface AdminUserItem {
+  id: number;
+  username: string;
+  /** NULL 时回退显示 username */
+  displayName: string | null;
+  role: UserRole;
+  deleted: boolean;
+  /** Unix 秒 */
+  createdAt: number;
+}
+
+export interface AdminUserPage {
+  items: AdminUserItem[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface AdminUserCreateRequest {
+  username: string;
+  password: string;
+  displayName?: string;
+}
+
+export interface AdminUserUpdateRequest {
+  displayName: string;
+}
+
+export interface AdminUserPasswordRequest {
+  newPassword: string;
+}
+
+/* -------------------------------------------------------- 管理端审计日志 */
+
+/** 管理端审计行（AdminAuditItem） */
+export interface AdminAuditItem {
+  id: number;
+  /** 操作者 id；历史行可能为 null */
+  operatorId: number | null;
+  /** 操作者 username；账号不存在时为 null，页面显示「—」 */
+  operatorName: string | null;
+  /** 动作名，如 admin.user.create */
+  action: string;
+  /** 操作对象，如 user:7 */
+  target: string | null;
+  /** 详情 JSON 原文（写入时快照，不做二次解释） */
+  detailJson: string | null;
+  /** Unix 秒 */
+  createdAt: number;
+}
+
+export interface AdminAuditPage {
+  items: AdminAuditItem[];
+  total: number;
+  page: number;
+  size: number;
 }
 
 /* ---------------------------------------------------------------- 会话 */
@@ -300,6 +366,10 @@ export interface EvalQuestion {
   question: string;
   keywords: string;
   evidence: string;
+  /** 是否参与选题（P5-08）；停用题仍留在题库与历史快照里 */
+  enabled: boolean;
+  /** seed 内置种子 / manual 手工新增 / import CSV 导入 / generated 自动生成 */
+  source: string;
 }
 
 export interface EvalCaseResult {
@@ -336,7 +406,14 @@ export interface EvalRun extends EvalRunSummary {
 }
 
 export interface EvalBatchRequest {
+  /** 精确点选的题号；空数组 = 让服务端按 types / sample / limit 筛选 */
   questionIds: string[];
+  /** 题型筛选（single / cross / out）；空 = 全部题型 */
+  types?: string[];
+  /** 最多测几道；null / 0 = 不限 */
+  limit?: number | null;
+  /** true = 随机抽样，false / 缺省 = 按题库顺序 */
+  sample?: boolean;
   mode: AnswerMode;
   k: number;
 }

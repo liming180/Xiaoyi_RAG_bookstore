@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import type { Citation, Message } from '@/types/api';
 import CitationCard from './CitationCard.vue';
 import MessageBubble from './MessageBubble.vue';
+import LatticeLoader from '@/components/bits/LatticeLoader.vue';
 
 /**
  * MessageList —— 对话流（F04）。
@@ -18,6 +19,16 @@ const props = defineProps<{
   streaming?: Message | null;
   /** 当前阶段文案（P3-B 用，P3-A 传空） */
   pendingLabel?: string;
+  /**
+   * 对照模式下隐藏最后一轮的助手气泡。
+   *
+   * <p>为什么要藏：对照模式的两栏已经把这一轮的回答完整显示了（且是并排的、
+   * 带差异摘要的），再在上方渲染一个普通气泡就是同一段内容的第二份拷贝。
+   * 实测截图里用户要同时看两处基本相同的内容，得来回滚动才能对上。
+   *
+   * <p>只藏**最后一轮**：更早的轮次仍按普通气泡显示，否则历史对话会整段消失。
+   */
+  hideAssistantInCompare?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -32,9 +43,33 @@ const listEl = ref<HTMLElement | null>(null);
 const activeCitation = ref<Citation | null>(null);
 const activeQuestion = ref<string>('');
 
+/**
+ * 最后一条 user 消息之后的所有 assistant 消息。
+ *
+ * 对照模式要藏掉的就是它们：这些属于「当前这一轮」，已经被两栏完整覆盖。
+ */
+const lastTurnAssistantIds = computed(() => {
+  if (!props.hideAssistantInCompare) return new Set<string>();
+  let lastUserIndex = -1;
+  for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+    if (props.messages[i]?.role === 'user') {
+      lastUserIndex = i;
+      break;
+    }
+  }
+  if (lastUserIndex < 0) return new Set<string>();
+  const ids = new Set<string>();
+  for (let i = lastUserIndex + 1; i < props.messages.length; i += 1) {
+    const m = props.messages[i];
+    if (m && m.role === 'assistant') ids.add(m.id);
+  }
+  return ids;
+});
+
 const visible = computed<Message[]>(() => {
-  const base = props.messages.slice();
-  if (props.streaming) base.push(props.streaming);
+  const base = props.messages.filter((m) => !lastTurnAssistantIds.value.has(m.id));
+  // 流式占位在对照模式下同样由两栏承载，不再单独塞气泡。
+  if (props.streaming && !props.hideAssistantInCompare) base.push(props.streaming);
   return base;
 });
 
@@ -97,8 +132,20 @@ defineExpose({ scrollToBottom, onCite, closeCard, activeCitation });
     />
 
     <div v-if="pendingLabel" class="msg-list__pending" data-testid="msg-pending" aria-busy="true">
-      <span class="msg-list__spinner" aria-hidden="true" />
-      <span>{{ pendingLabel }}</span>
+      <LatticeLoader
+        class="msg-list__lattice"
+        :label="pendingLabel"
+        pattern="orbit"
+        :grid="3"
+        shape="round"
+        :cell-size="5"
+        :gap="2"
+        :font-size="13"
+        :idle-opacity="0.15"
+        :glow="false"
+        :show-timer="true"
+        color="var(--teal)"
+      />
     </div>
 
     <div v-if="activeCitation" class="msg-list__card-wrap" data-testid="cite-card-wrap">
@@ -148,26 +195,15 @@ defineExpose({ scrollToBottom, onCite, closeCard, activeCitation });
   align-items: center;
   gap: 8px;
   align-self: flex-start;
-  padding: 8px 14px;
-  font-size: 13px;
-  color: var(--teal);
+  padding: 6px 14px;
   background: var(--soft);
   border-radius: 999px;
+  color: var(--teal);
 }
 
-.msg-list__spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid color-mix(in srgb, var(--teal) 30%, transparent);
-  border-top-color: var(--teal);
-  border-radius: 50%;
-  animation: msg-spin 0.8s linear infinite;
-}
-
-@keyframes msg-spin {
-  to {
-    transform: rotate(360deg);
-  }
+/* LatticeLoader（vue-bits）等待行：格子 + 阶段文案 + 计时 */
+.msg-list__lattice {
+  color: var(--teal);
 }
 
 .msg-list__card-wrap {

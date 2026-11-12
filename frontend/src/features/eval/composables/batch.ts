@@ -1,4 +1,5 @@
-import type { EvalCaseResult, EvalQuestion, EvalRun, EvalStats } from '@/types/api';
+import type { EvalCaseResult, EvalQuestion, EvalRun, EvalRunSummary, EvalStats } from '@/types/api';
+import { formatDateTime } from '@/utils/time';
 
 /**
  * 批量对照测试的纯函数层（F09）。
@@ -7,12 +8,29 @@ import type { EvalCaseResult, EvalQuestion, EvalRun, EvalStats } from '@/types/a
  * 前端这里**不重算判分**，只做展示层的汇总与格式化 —— 免得前后端两套判分逻辑漂移。
  */
 
-/** 题型中文名：单文档 / 跨文档 / 库外 */
+/**
+ * 题型中文名：用「用户能看懂的话」描述答案范围，不用行话。
+ *
+ * - single：答案在一份资料里就能找到；
+ * - cross：要综合两份以上资料才能答全；
+ * - out：资料库里故意没有答案，考察模型会不会老实说「资料中没有提到」。
+ */
 export const TYPE_LABELS: Record<string, string> = {
-  single: '单文档',
-  cross: '跨文档',
-  out: '库外',
+  single: '单份资料可答',
+  cross: '需综合多篇',
+  out: '库外题（考察拒答）',
 };
+
+/** 题型的完整解释：选题目和筛选条上做 hover 提示，一句话讲清这类题考什么 */
+export const TYPE_HINTS: Record<string, string> = {
+  single: '答案就在一篇上传的资料里，考察「找得到」',
+  cross: '答案分散在两份以上资料里，考察「综合归纳」',
+  out: '资料库里没有这道题的答案，考察模型会不会老实说「资料中没有提到」而不是瞎编',
+};
+
+export function typeHint(type: string): string {
+  return TYPE_HINTS[type] ?? '';
+}
 
 /** 题型徽标色调：库外题最需要人眼关注，给琥珀 */
 export const TYPE_TONES: Record<string, 'info' | 'ok' | 'warn'> = {
@@ -89,6 +107,22 @@ export function batchCsvRows(cases: EvalCaseResult[]): string[][] {
   return [header, ...rows];
 }
 
+/**
+ * 从题库随机抽 n 道（Fisher-Yates 洗牌后取前 n）。
+ *
+ * 「想测 N 道」比「逐个勾 N 道」常见得多 —— 抽样跑小批评测是调参时的主路径。
+ * n 超过题库总数时返回全部（去重后就是全量），n<=0 返回空。
+ */
+export function shufflePick(ids: string[], n: number): string[] {
+  const size = Math.floor(Math.min(Math.max(n, 0), ids.length));
+  const pool = [...ids];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, size);
+}
+
 /** 问题集按题型分组，供「选问题集」时的分组勾选 */
 export function groupQuestions(questions: EvalQuestion[]): Array<{ type: string; label: string; items: EvalQuestion[] }> {
   const order = ['single', 'cross', 'out'];
@@ -135,16 +169,60 @@ export function runStatusTone(status: EvalRun['status']): 'ok' | 'warn' | 'error
   }
 }
 
-/** 时间戳 → 2026-10-30 23:15 */
-export function formatTime(ts: number | null | undefined): string {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+/**
+ * 时间戳 → 2026-11-09 14:30
+ *
+ * A-1 修复：转发到 utils/time 的 formatDateTime（内部做秒/毫秒归一化）。
+ * 原先这里直接 new Date(ts)，而后端给的是 Unix 秒，实际显示成 1970-01-22。
+ * 导出名保持不变，RunHistory / CandidatePool 的调用点零改动。
+ */
+export const formatTime = formatDateTime;
 
 /** 回答摘要：表格里塞不下整段，截断到 n 字 */
 export function excerpt(text: string, n = 90): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length <= n ? flat : `${flat.slice(0, n)}…`;
+}
+
+/* ---------------------------------------------------------- 结果筛选与聚合 */
+
+/** 结果表筛选键：all 全部 / failed 只看未通过 / 其余按题型 */
+export type FilterKey = 'all' | 'failed' | 'single' | 'cross' | 'out';
+
+/**
+ * 按筛选键过滤结果行。
+ *
+ * 「failed」以**查资料侧未通过**为准：RAG 是产品主链路，rag 挂了就是 badcase，
+ * direct 挂而 rag 过的题反而是检索价值的证据，不该混进 badcase 列表。
+ */
+export function filterCases(cases: EvalCaseResult[], filter: FilterKey): EvalCaseResult[] {
+  if (filter === 'all') return cases;
+  if (filter === 'failed') return cases.filter((c) => !c.ragPassed);
+  return cases.filter((c) => c.type === filter);
+}
+
+/** 平均耗时（ms，四舍五入）；空列表返回 0，避免除零 NaN。 */
+export function avgElapsed(cases: EvalCaseResult[]): number {
+  if (cases.length === 0) return 0;
+  return Math.round(cases.reduce((sum, c) => sum + c.elapsedMs, 0) / cases.length);
+}
+
+/**
+ * 历史趋势点：按时间**正序**取最近 n 次，供 sparkline 画折线。
+ *
+ * 入参是「新在前」的列表（RunHistory 展示顺序），画趋势必须旧→新，
+ * 所以先按 createdAt 升序排，再取末尾 n 个 —— 早期实验数据多了也只看最近几次。
+ */
+export function trendPoints(
+  runs: Array<Pick<EvalRunSummary, 'createdAt' | 'stats'>>,
+  n = 10,
+): Array<{ ts: number; rate: number }> {
+  return [...runs]
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .filter((r) => (r.stats?.total ?? 0) > 0)
+    .slice(-n)
+    .map((r) => ({
+      ts: r.createdAt,
+      rate: passRate(r.stats?.passedRag ?? 0, r.stats?.total ?? 0),
+    }));
 }

@@ -197,6 +197,11 @@ public class MockAiClient implements AiServiceClient {
         for (String token : answerTokens) {
             script.add(() -> listener.onEvent(AiStreamEvent.token(token)));
         }
+        // both 模式的「直接答」侧。刻意与 rag 侧措辞不同：对照模式的价值就在于两栏
+        // 看得出差别，若 mock 两侧都吐通用套话，前端差异摘要条永远是 0 vs 0，
+        // 连「摘要条有没有接上数据」都测不出来。
+        // 真实 AI 侧（server-ai）由 provider 独立生成，这里只是 Java 的 mock 通道。
+
         // N2：推荐随问题变化，且 direct 模式不给（与 Python 侧 `suggestions.generate`
         // 在 direct 时无从推断追问的语义一致 —— 没有检索资料就没有「有据可答」的追问）。
         List<String> suggestions = "direct".equals(mode) ? List.of() : mockSuggestions(request);
@@ -213,7 +218,7 @@ public class MockAiClient implements AiServiceClient {
                                     false,
                                     suggestions,
                                     "both".equals(mode) ? "m-direct-" + sequence.get() : null,
-                                    "both".equals(mode) ? "（直答）读书会每周六下午举行。" : null));
+                                    "both".equals(mode) ? mockDirectAnswer(request) : null));
                     log.debug("MockAiClient 推完一轮事件 mode={} k={}", mode, topK);
                 });
 
@@ -253,6 +258,30 @@ public class MockAiClient implements AiServiceClient {
      * @param request 内部契约请求，可为 null
      * @return 追问列表；问题为空时返回空列表
      */
+    /**
+     * both 模式下「直接答」侧的模拟回答。
+     *
+     * <p>刻意与 rag 侧措辞明显不同：对照模式的价值在于两栏看得出差别。若两侧都吐 通用套话，前端差异摘要条会永远显示「0 vs 0」，连摘要有没有接上数据都测不出来。
+     *
+     * <p>真实链路由 server-ai 的 provider 独立生成，这里只是 Java mock 通道： AI 服务不可达时降级使用的确定性回答。
+     *
+     * @param request 本轮请求，用来让答案随问题变化
+     * @return 直答正文（不含任何 [n] 引用标记 —— 这个模式没有检索）
+     */
+    private static String mockDirectAnswer(AiChatRequest request) {
+        String question = request == null ? "" : String.valueOf(request.question());
+        if (question.contains("几本") || question.contains("借阅")) {
+            return "按常见图书馆规则，普通图书一般一次可借 3 到 5 本，借期多为 30 天。" + "具体以你所在馆的规定为准 —— 我这里没有你们的借阅规则原文。";
+        }
+        if (question.contains("几点") || question.contains("时间")) {
+            return "一般读书会安排在周末下午。不过各组织习惯不同，" + "具体时间建议看活动通知，我没有你们的日程表。";
+        }
+        if (question.contains("费用") || question.contains("多少钱")) {
+            return "读书会多数是免费的，部分收取少量场地费。" + "你这个活动的收费标准我无从确认。";
+        }
+        return "这个问题我知道了方向，但缺少你们的具体资料，只能给出一般性说明。";
+    }
+
     private static List<String> mockSuggestions(AiChatRequest request) {
         String question = request == null || request.question() == null ? "" : request.question();
         String stem = question.strip();

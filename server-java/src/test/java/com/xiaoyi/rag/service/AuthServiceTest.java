@@ -54,8 +54,8 @@ class AuthServiceTest {
 
     @BeforeEach
     void seed() {
-        when(users.findByUsername(anyString())).thenReturn(Optional.empty());
-        when(users.findByUsername("alice"))
+        when(users.findByUsernameAndDeletedFalse(anyString())).thenReturn(Optional.empty());
+        when(users.findByUsernameAndDeletedFalse("alice"))
                 .thenReturn(Optional.of(user(7L, "alice", encoder.encode(PASSWORD))));
     }
 
@@ -117,7 +117,8 @@ class AuthServiceTest {
     @Test
     void legacyLiteralDemoHashNoLongerAuthenticates() {
         // V6 迁移插入的演示行 password_hash 是字面量 "demo"，不是 BCrypt 摘要。
-        when(users.findByUsername("demo")).thenReturn(Optional.of(user(1L, "demo", "demo")));
+        when(users.findByUsernameAndDeletedFalse("demo"))
+                .thenReturn(Optional.of(user(1L, "demo", "demo")));
 
         assertThatThrownBy(() -> service.login(new LoginRequest("demo", "demo")))
                 .isInstanceOf(ApiException.class)
@@ -151,10 +152,43 @@ class AuthServiceTest {
 
     @Test
     void profileReturnsTheStoredUsername() {
-        when(users.findById(7L))
+        when(users.findByIdAndDeletedFalse(7L))
                 .thenReturn(Optional.of(user(7L, "alice", encoder.encode(PASSWORD))));
 
         assertThat(service.profile(7L).username()).isEqualTo("alice");
+    }
+
+    @Test
+    void loginExposesRoleForFrontendRouting() {
+        LoginResultVO user = service.login(new LoginRequest("alice", PASSWORD));
+        assertThat(user.user().role()).isEqualTo("USER");
+
+        when(users.findByUsernameAndDeletedFalse("root"))
+                .thenReturn(Optional.of(admin(8L, "root", encoder.encode(PASSWORD))));
+        assertThat(service.login(new LoginRequest("root", PASSWORD)).user().role())
+                .isEqualTo("ADMIN");
+    }
+
+    @Test
+    void displayNameFallsBackToUsernameWhenNull() {
+        LoginResultVO result = service.login(new LoginRequest("alice", PASSWORD));
+        assertThat(result.user().displayName()).isEqualTo("alice");
+    }
+
+    @Test
+    void softDeletedAccountCannotLogIn() {
+        // 查询已带 deleted = false，软删行查不到 → 与「未知账号」同一条错误
+        when(users.findByUsernameAndDeletedFalse("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.login(new LoginRequest("ghost", PASSWORD)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("用户名或密码错误");
+    }
+
+    private static User admin(long id, String username, String hash) {
+        User user = user(id, username, hash);
+        user.setRole("ADMIN");
+        return user;
     }
 
     private static String messageOf(Runnable action) {

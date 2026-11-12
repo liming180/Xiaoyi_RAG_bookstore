@@ -51,7 +51,11 @@ class EvalServiceOptionsTest {
                         })
                 .when(ai)
                 .chatStream(anyLong(), any(), any());
-        return new EvalServiceImpl(ai, mock(EvalRunRepository.class), new ObjectMapper());
+        return new EvalServiceImpl(
+                ai,
+                mock(EvalRunRepository.class),
+                new ObjectMapper(),
+                mock(QuestionBankService.class));
     }
 
     @Test

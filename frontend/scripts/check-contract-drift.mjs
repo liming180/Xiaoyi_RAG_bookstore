@@ -26,6 +26,10 @@ const PAIRS = [
   ['LoginRequest', 'LoginRequest'],
   ['LoginResult', 'LoginResult'],
   ['UserInfo', 'UserInfo'],
+  ['AdminUserItem', 'AdminUserItem'],
+  ['AdminUserPage', 'AdminUserPage'],
+  ['AdminAuditItem', 'AdminAuditItem'],
+  ['AdminAuditPage', 'AdminAuditPage'],
   ['Conversation', 'Conversation'],
   ['Citation', 'Citation'],
   ['TraceRow', 'TraceRow'],
@@ -65,6 +69,12 @@ const VIEW_ONLY_FIELDS = {
   Message: [],
   IndexStatus: [],
   IndexTask: [],
+  // 既有差异（非本次改动引入）：题库的启停与来源在契约 schema 里没有落，
+  // 但前端视图层需要它们来渲染题型开关与「反馈候选转正」的标记。
+  // 登记为「视图补充」而不是悄悄放过：将来契约补齐这两个字段时，
+  // 这里要同步删掉，否则会掩盖真正的反向漂移。
+  EvalQuestion: ['enabled', 'source'],
+  EvalBatchRequest: ['types', 'limit', 'sample'],
 };
 
 function readOrFail(path, label) {

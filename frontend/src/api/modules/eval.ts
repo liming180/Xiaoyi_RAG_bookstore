@@ -15,23 +15,104 @@ import { get, http, post } from '../http';
 
 /* ---------------------------------------------------------------- 题目 */
 
+/**
+ * 题库归一化。
+ *
+ * <p>P5-08 起题库来自 `eval_question` 表，比种子 CSV 多了 `enabled` 与 `source` 两个字段：
+ * 管理界面要靠 `enabled` 显示停用态、靠 `source` 判断能不能删（内置种子题只能停用）。
+ */
+function normalizeQuestion(item: unknown, i = 0): EvalQuestion {
+  const o = (item ?? {}) as Record<string, unknown>;
+  return {
+    id: String(o.id ?? o.编号 ?? `T${String(i + 1).padStart(2, '0')}`),
+    type: String(o.type ?? o.类型 ?? ''),
+    question: String(o.question ?? o.问题 ?? ''),
+    keywords: String(o.keywords ?? o.判分关键词 ?? ''),
+    evidence: String(o.evidence ?? o.证据文件 ?? ''),
+    enabled: o.enabled === undefined ? true : Boolean(o.enabled),
+    source: String(o.source ?? 'seed'),
+  } satisfies EvalQuestion;
+}
+
+/** 当前用户**启用中**的题库，评测选题用这条。 */
 export async function listQuestions(): Promise<EvalQuestion[]> {
   const raw = await get<unknown>('/eval/questions');
   const items = Array.isArray(raw) ? raw : ((raw as { items?: unknown[] })?.items ?? []);
-  return items.map((item, i) => {
-    const o = (item ?? {}) as Record<string, unknown>;
-    return {
-      id: String(o.id ?? o.编号 ?? `T${String(i + 1).padStart(2, '0')}`),
-      type: String(o.type ?? o.类型 ?? ''),
-      question: String(o.question ?? o.问题 ?? ''),
-      keywords: String(o.keywords ?? o.判分关键词 ?? ''),
-      evidence: String(o.evidence ?? o.证据文件 ?? ''),
-    } satisfies EvalQuestion;
+  return items.map((item, i) => normalizeQuestion(item, i));
+}
+
+/** 题库全量（含停用），管理界面用这条。 */
+export async function listAllQuestions(): Promise<EvalQuestion[]> {
+  const raw = await get<unknown>('/eval/questions/all');
+  const items = Array.isArray(raw) ? raw : ((raw as { items?: unknown[] })?.items ?? []);
+  return items.map((item, i) => normalizeQuestion(item, i));
+}
+
+/** 新增题目；code 留空时后端按题型自动编号（S001 / X001 / O001）。 */
+export async function createQuestion(payload: {
+  code?: string;
+  type: string;
+  question: string;
+  keywords?: string;
+  evidence?: string;
+}): Promise<EvalQuestion> {
+  return normalizeQuestion(await post<unknown>('/eval/questions', payload));
+}
+
+/** 修改题目；题号不可改（已被历史评测快照引用）。 */
+export async function updateQuestion(
+  code: string,
+  payload: { type: string; question: string; keywords?: string; evidence?: string },
+): Promise<EvalQuestion> {
+  const raw = await http.put<unknown>(
+    `/eval/questions/${encodeURIComponent(code)}`,
+    payload,
+  );
+  return normalizeQuestion(raw.data);
+}
+
+/** 停用 / 启用题目。停用后不再进入新评测，但历史评测照常可读。 */
+export async function setQuestionEnabled(code: string, enabled: boolean): Promise<EvalQuestion> {
+  const raw = await post<unknown>(`/eval/questions/${encodeURIComponent(code)}/enabled`, {
+    enabled,
   });
+  return normalizeQuestion(raw);
+}
+
+/** 删除题目；内置种子题会被后端拒绝（只能停用）。 */
+export async function deleteQuestion(code: string): Promise<void> {
+  await http.delete<void>(`/eval/questions/${encodeURIComponent(code)}`);
+}
+
+/** 导出题库 CSV（列与 questions.csv 对齐，可直接再导入）。 */
+export async function exportQuestions(): Promise<Blob> {
+  const response = await http.get<Blob>('/eval/questions/export', { responseType: 'blob' });
+  return response.data;
+}
+
+/** 从 CSV 导入题目；题号冲突跳过并计数，不整批失败。 */
+export async function importQuestions(csv: string): Promise<{
+  created: number;
+  skipped: number;
+  errors: string[];
+}> {
+  const raw = await post<unknown>('/eval/questions/import', { csv });
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    created: Number(o.created ?? 0),
+    skipped: Number(o.skipped ?? 0),
+    errors: Array.isArray(o.errors) ? (o.errors as string[]) : [],
+  };
 }
 
 /* ------------------------------------------------------------ 批量对照 */
 
+/**
+ * 发起批量评测。
+ *
+ * <p>选题有两条路径：`questionIds` 非空 = 精确点选；为空则按 `types` / `sample` / `limit` 由服务端筛选。
+ * 筛选必须在服务端做 —— 题库是用户数据会持续增长，前端每次先拉全库再回传题号既慢又容易不一致。
+ */
 export async function startBatch(payload: EvalBatchRequest): Promise<EvalRunSummary> {
   return post<EvalRunSummary>('/eval/batch', payload);
 }

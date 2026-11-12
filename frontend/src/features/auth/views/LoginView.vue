@@ -6,6 +6,7 @@ import { ChatDotRound, Lock, User } from '@element-plus/icons-vue';
 import { ApiError, authApi } from '@/api';
 import { APP_TITLE } from '@/constants/app';
 import { safeRedirect } from '@/app/router/guard';
+import { setRole } from '@/app/router/role';
 import { useUiPrefsStore } from '@/stores/uiPrefs';
 
 /**
@@ -32,8 +33,21 @@ function onTheme(): void {
   uiPrefs.toggle();
 }
 
-async function afterLogin(): Promise<void> {
-  await router.replace(target.value);
+/**
+ * 登录成功后落哪一页。
+ *
+ * 有 redirect 就直达（例如被守卫弹回来时保留的原目标）；否则按角色分流：
+ * 管理员进用户管理，普通用户进对话页。这是「管理端/用户端」的第一道分流，
+ * 路由守卫是第二道（手输 /admin 会被弹回来）。
+ */
+function landingFor(role: string, fallback: string): string {
+  const hasRedirect = typeof route.query.redirect === 'string' && route.query.redirect !== '';
+  if (hasRedirect) return fallback;
+  return role === 'ADMIN' ? '/admin/users' : '/chat';
+}
+
+async function afterLogin(role: string): Promise<void> {
+  await router.replace(landingFor(role, target.value));
 }
 
 async function onSubmit(): Promise<void> {
@@ -41,9 +55,14 @@ async function onSubmit(): Promise<void> {
   submitting.value = true;
   error.value = null;
   try {
-    await authApi.login({ username: username.value.trim(), password: password.value });
+    const result = await authApi.login({
+      username: username.value.trim(),
+      password: password.value,
+    });
+    // 角色随登录态一起落盘：路由守卫每次导航都要读它，不能每次都发请求。
+    setRole(result?.user?.role ?? 'USER');
     ElMessage.success('登录成功');
-    await afterLogin();
+    await afterLogin(result?.user?.role ?? 'USER');
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '登录失败，请检查账号密码';
   } finally {

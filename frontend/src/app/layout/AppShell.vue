@@ -113,10 +113,18 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+/*
+ * A-2 修复（2026-11-09）：原来是 display:block。
+ * 子页（如 .chat-view）用 flex:1 想撑满高度，但 block 父级里 flex 属性完全失效 ——
+ * 实测视口 699px 时聊天内容只占 528px，输入框下方空出 171px。
+ * 改成 flex column 后子页的 flex:1 才真正生效。
+ */
 .shell__main {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
 }
 

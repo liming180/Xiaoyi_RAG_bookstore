@@ -183,7 +183,8 @@ public class ExperimentServiceImpl implements ExperimentService {
         try {
             // 空列表 = 创建时没选题，按全部题库题跑。放在 try 里是因为「题库读不出来」属于环境问题，
             // 应该落到实验行的 error 上让前端看见原因，而不是在请求线程里炸成 500。
-            List<EvalQuestionVO> questions = fixed.isEmpty() ? evaluations.questions() : fixed;
+            List<EvalQuestionVO> questions =
+                    fixed.isEmpty() ? evaluations.questions(userId) : fixed;
             if (questions.isEmpty()) throw new IllegalStateException("评测题集为空");
             // 可计分的题号集合：分子分母都只在这批题里算。
             java.util.Set<String> scorable = new java.util.LinkedHashSet<>();
@@ -316,7 +317,7 @@ public class ExperimentServiceImpl implements ExperimentService {
      * @return 解析后的题目列表（去重，保持请求顺序）
      */
     private List<EvalQuestionVO> selectQuestions(Long userId, List<String> questionIds) {
-        List<EvalQuestionVO> bank = evaluations.questions();
+        List<EvalQuestionVO> bank = evaluations.questions(userId);
         if (questionIds == null || questionIds.isEmpty()) return List.copyOf(bank);
         List<EvalQuestionVO> selected = new ArrayList<>();
         for (String raw : questionIds) {

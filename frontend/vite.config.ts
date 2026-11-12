@@ -45,7 +45,7 @@ export default defineConfig({
     /*
      * Element Plus 全量引入后 UI 包约 794 kB（min）/ 251 kB（gzip），
      * 超过 Vite 默认 500 kB 阈值属预期，不是漏配：
-     *  - 全量引入是本轮显式决策（见 docs/02-重构设计/03_前端开发提示词.md P1-A）
+     *  - 全量引入是显式决策（见 docs/02-重构设计/前端文档.md §1 技术选型）
      *  - 按需引入需要 unplugin-vue-components，与锁定的构建链版本不匹配
      * 因此把阈值抬到实测值之上并在此记录真实体积，build 保持零告警。
      * 实测体积写入 test-artifacts/build-size.json（P6 阶段复核）。

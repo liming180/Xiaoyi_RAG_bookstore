@@ -25,8 +25,14 @@ public class AuthService {
         this.ttl = properties.getAuth().getTokenTtlSeconds();
     }
 
+    /**
+     * 口令登录。
+     *
+     * <p><b>软删账号走「未知账号」这条路</b>：查询用 {@code findByUsernameAndDeletedFalse}，所以 {@code deleted=1}
+     * 的行根本查不到 → 落到 dummyHash 的假校验 → 回同一个「用户名或密码错误」。 这样删号即封停，且不泄漏「这个账号曾经存在」。
+     */
     public LoginResultVO login(LoginRequest request) {
-        User user = users.findByUsername(request.username().trim()).orElse(null);
+        User user = users.findByUsernameAndDeletedFalse(request.username().trim()).orElse(null);
         String hash = user == null ? dummyHash : user.getPasswordHash();
         String password = request.password();
         boolean matches = passwords.matches(password == null ? "" : password, hash);
@@ -40,10 +46,18 @@ public class AuthService {
         if (id == null || id <= 0) {
             throw new ApiException(40100, "登录已过期");
         }
-        return toUserInfo(users.findById(id).orElseThrow(() -> new ApiException(40100, "登录已过期")));
+        return toUserInfo(
+                users.findByIdAndDeletedFalse(id)
+                        .orElseThrow(() -> new ApiException(40100, "登录已过期")));
     }
 
     private UserInfoVO toUserInfo(User user) {
-        return new UserInfoVO(user.getId(), user.getUsername(), user.getUsername());
+        // displayName 为空时回退 username：前端列表与顶栏都直接展示这个值，
+        // 回 null 会让老数据（V11 之前的行）在界面上显示成空白。
+        String displayName =
+                user.getDisplayName() == null || user.getDisplayName().isBlank()
+                        ? user.getUsername()
+                        : user.getDisplayName();
+        return new UserInfoVO(user.getId(), user.getUsername(), displayName, user.getRole());
     }
 }

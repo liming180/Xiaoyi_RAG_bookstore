@@ -9,9 +9,11 @@ import { downloadBlob } from '@/utils/csv';
 import BatchRunner from '../components/BatchRunner.vue';
 import RunHistory from '../components/RunHistory.vue';
 import CandidatePool from '../components/CandidatePool.vue';
+import QuestionBank from '../components/QuestionBank.vue';
 import ExperimentMatrix from '../components/ExperimentMatrix.vue';
 import { useBatchRun } from '../composables/useBatchRun';
 import { useExperiment } from '../composables/useExperiment';
+import { useQuestionBank } from '../composables/useQuestionBank';
 
 /**
  * EvalView —— 评测页（P5）。
@@ -25,12 +27,13 @@ import { useExperiment } from '../composables/useExperiment';
  * 用 query 而不是本地 ref 存当前页签，是为了让「从对话页 👎 → 候选池」这类
  * 跨页跳转可以直接带参数落到目标页签。
  */
-type TabKey = 'batch' | 'history' | 'candidates' | 'experiment';
+type TabKey = 'batch' | 'history' | 'candidates' | 'questionbank' | 'experiment';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'batch', label: '批量对照' },
   { key: 'history', label: '历史评测' },
   { key: 'candidates', label: '候选题池' },
+  { key: 'questionbank', label: '题库管理' },
   { key: 'experiment', label: '参数实验' },
 ];
 
@@ -39,6 +42,7 @@ const router = useRouter();
 
 const batch = useBatchRun();
 const experiment = useExperiment();
+const bank = useQuestionBank();
 
 /* ---------------------------------------------------------------- 页签 */
 
@@ -60,14 +64,11 @@ const candidatesLoading = ref(false);
 const candidatesError = ref<string | null>(null);
 const candidateBusyId = ref<string | null>(null);
 
-/**
- * 历史详情是否展开。
- *
- * 不能只靠 `batch.run` 有没有值来判断：用户先在「批量对照」里跑完一次，
- * `batch.run` 就已经有值了，这时切到「历史评测」会直接顶出一大块详情，
- * 把历史列表挤到看不见。所以详情必须是「点某一行才展开」的显式动作。
+/*
+ * 历史详情现在由 RunHistory 自己管展开态（内联在卡片下方），
+ * 这里只负责把拉到的 run 传进去 —— 原来那个「列表下方一大块详情」的
+ * historyDetailOpen 开关已随 BatchRunner 复用一起删掉。
  */
-const historyDetailOpen = ref(false);
 
 async function loadCandidates(): Promise<void> {
   candidatesLoading.value = true;
@@ -149,13 +150,55 @@ function onSelectedIds(ids: string[]): void {
 
 async function onStart(): Promise<void> {
   const ok = await batch.start();
-  if (ok) ElMessage.success('批量对照测试已完成');
-  else if (batch.error.value) ElMessage.error(batch.error.value);
+  if (ok) {
+    ElMessage.success('批量对照测试已完成');
+    // 跑完立即刷新历史列表，不然要等用户手动点「刷新」才能看到这次记录。
+    void batch.loadHistory();
+  } else if (batch.error.value) {
+    ElMessage.error(batch.error.value);
+  }
 }
 
+/**
+ * 重跑未通过题（P5-04）：把选题切成 failed 集合后走同一条 start 链路。
+ *
+ * 直接改 selectedIds 再调 start，而不是另开接口 —— 后端 /eval/batch 本来就
+ * 支持任选题目，闭环在前端完成，契约零改动。
+ */
+async function onRerunFailed(ids: string[]): Promise<void> {
+  if (ids.length === 0 || batch.running.value) return;
+  batch.selectedIds.value = ids;
+  const ok = await batch.start();
+  if (ok) {
+    ElMessage.success(`已重跑 ${ids.length} 道未通过题`);
+    void batch.loadHistory();
+  } else if (batch.error.value) {
+    ElMessage.error(batch.error.value);
+  }
+}
+
+/**
+ * 展开某次历史评测的详情。
+ *
+ * 详情是异步拉的（列表接口不带 cases），所以要自己管「加载中 / 失败」两态 ——
+ * 否则点「查看详情」后那一瞬间是空白，用户会以为按钮没反应。
+ */
+const historyDetailLoading = ref(false);
+const historyDetailError = ref<string | null>(null);
+
 async function onOpenRun(id: string): Promise<void> {
-  await batch.openRun(id);
-  historyDetailOpen.value = true;
+  // 已经展开过同一条就不重复拉
+  if (batch.run.value?.id === id && !historyDetailError.value) return;
+  historyDetailLoading.value = true;
+  historyDetailError.value = null;
+  try {
+    await batch.openRun(id);
+    if (!batch.run.value) historyDetailError.value = '没能加载这次评测的详情';
+  } catch (e) {
+    historyDetailError.value = e instanceof ApiError ? e.message : '详情加载失败，请重试';
+  } finally {
+    historyDetailLoading.value = false;
+  }
 }
 
 async function onCreateExperiment(): Promise<void> {
@@ -183,6 +226,57 @@ async function loadTab(tab: TabKey): Promise<void> {
   }
   if (tab === 'candidates') {
     await loadCandidates();
+  }
+  if (tab === 'questionbank') {
+    await bank.load();
+  }
+}
+
+/* ---------------------------------------------------------- 题库管理 */
+
+/**
+ * 保存题目草稿。
+ *
+ * 题库改动会影响「批量对照」的选题范围，所以成功后同时刷新评测侧的题目列表，
+ * 否则用户改完题切回批量页签，看到的还是旧的 13 道。
+ */
+async function onSaveQuestion(draft: Parameters<typeof bank.save>[0]): Promise<void> {
+  const ok = await bank.save(draft);
+  if (ok) {
+    ElMessage.success('已保存');
+    await batch.loadQuestions();
+  } else if (bank.error.value) {
+    ElMessage.error(bank.error.value);
+  }
+}
+
+async function onRemoveQuestion(q: { id: string; source: string }): Promise<void> {
+  const ok = await bank.remove(q as never);
+  if (ok) {
+    ElMessage.success(`已删除 ${q.id}`);
+    await batch.loadQuestions();
+  } else if (bank.error.value) {
+    ElMessage.error(bank.error.value);
+  }
+}
+
+async function onToggleQuestion(q: never): Promise<void> {
+  await bank.toggleEnabled(q);
+  if (bank.error.value) ElMessage.error(bank.error.value);
+  else await batch.loadQuestions();
+}
+
+async function onImportQuestions(csv: string): Promise<void> {
+  const result = await bank.importCsv(csv);
+  if (result) {
+    ElMessage.success(`导入完成：新增 ${result.created} 条，跳过 ${result.skipped} 条`);
+    if (result.errors.length > 0) {
+      // 逐行错误用 warning 列出：跳过是预期行为，但用户得知道哪几行没进去。
+      ElMessage.warning(result.errors.slice(0, 3).join('；'));
+    }
+    await batch.loadQuestions();
+  } else if (bank.error.value) {
+    ElMessage.error(bank.error.value);
   }
 }
 
@@ -241,13 +335,21 @@ onBeforeUnmount(() => {
         :running="batch.running.value"
         :loading="batch.loading.value"
         :error="batch.error.value"
+        :selected-types="batch.selectedTypes.value"
+        :count-mode="batch.countMode.value"
+        :limit-count="batch.limitCount.value"
         @update:selected-ids="onSelectedIds"
         @update:mode="onMode"
         @update:k="onK"
+        @update:count-mode="(v: 'all' | 'limit') => (batch.countMode.value = v)"
+        @update:limit-count="(v: number) => (batch.limitCount.value = v)"
+        @toggle-type="batch.toggleType"
         @start="onStart"
+        @rerun="onRerunFailed"
         @toggle="batch.toggleQuestion"
         @select-all="batch.selectAll"
         @select-none="batch.selectNone"
+        @pick-random="batch.pickRandom"
       />
 
       <template v-else-if="activeTab === 'history'">
@@ -256,30 +358,35 @@ onBeforeUnmount(() => {
           :loading="batch.historyLoading.value"
           :error="batch.historyError.value"
           :active-id="batch.run.value?.id ?? null"
+          :detail="batch.run.value"
+          :detail-loading="historyDetailLoading"
+          :detail-error="historyDetailError"
           @open="onOpenRun"
           @refresh="batch.loadHistory"
         />
 
-        <div v-if="batch.run.value && historyDetailOpen" class="eval__detail" data-testid="history-detail">
-          <BatchRunner
-            :questions="batch.questions.value"
-            :selected-ids="batch.selectedIds.value"
-            :mode="batch.run.value.mode"
-            :k="batch.run.value.k"
-            :run="batch.run.value"
-            :running="batch.running.value"
-            :loading="false"
-            :error="batch.error.value"
-            @update:selected-ids="onSelectedIds"
-            @update:mode="onMode"
-            @update:k="onK"
-            @start="onStart"
-            @toggle="batch.toggleQuestion"
-            @select-all="batch.selectAll"
-            @select-none="batch.selectNone"
-          />
-        </div>
       </template>
+
+      <QuestionBank
+        v-else-if="activeTab === 'questionbank'"
+        :questions="bank.questions.value"
+        :loading="bank.loading.value"
+        :error="bank.error.value"
+        :busy-code="bank.busyCode.value"
+        :saving="bank.saving.value"
+        :importing="bank.importing.value"
+        :exporting="bank.exporting.value"
+        :editing="bank.editing.value"
+        @close-editor="bank.closeEdit"
+        @refresh="bank.load"
+        @create="bank.openCreate"
+        @edit="bank.openEdit"
+        @save="onSaveQuestion"
+        @remove="onRemoveQuestion"
+        @toggle-enabled="onToggleQuestion"
+        @import="onImportQuestions"
+        @export="bank.exportCsv"
+      />
 
       <CandidatePool
         v-else-if="activeTab === 'candidates'"

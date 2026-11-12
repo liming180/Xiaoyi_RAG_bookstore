@@ -27,10 +27,15 @@ public enum ErrorCode {
     EXPERIMENT_NOT_FOUND(40405, "实验不存在", HttpStatus.NOT_FOUND),
     CONVERSATION_NOT_FOUND(40406, "会话不存在", HttpStatus.NOT_FOUND),
     MESSAGE_NOT_FOUND(40407, "消息不存在", HttpStatus.NOT_FOUND),
+    QUESTION_NOT_FOUND(40408, "题目不存在", HttpStatus.NOT_FOUND),
+    USER_NOT_FOUND(40409, "用户不存在", HttpStatus.NOT_FOUND),
 
     EXPERIMENT_BUSY(40901, "实验进行中，提问暂不可用", HttpStatus.CONFLICT),
     EXPERIMENT_ALREADY_RUNNING(40902, "已有实验在执行", HttpStatus.CONFLICT),
     INDEX_TASK_ALREADY_RUNNING(40903, "已有建库任务在执行", HttpStatus.CONFLICT),
+    QUESTION_CODE_DUPLICATE(40904, "题号已存在", HttpStatus.CONFLICT),
+    USERNAME_DUPLICATE(40905, "用户名已存在", HttpStatus.CONFLICT),
+    ADMIN_ACCOUNT_PROTECTED(40906, "不能对管理员账号执行该操作", HttpStatus.CONFLICT),
 
     INTERNAL_ERROR(50000, "服务内部错误", HttpStatus.INTERNAL_SERVER_ERROR),
     MODEL_FAILED(50001, "模型调用失败", HttpStatus.INTERNAL_SERVER_ERROR),

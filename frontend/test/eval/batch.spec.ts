@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { EvalCaseResult, EvalQuestion, EvalStats } from '@/types/api';
 import {
+  avgElapsed,
   batchCsvRows,
   excerpt,
+  filterCases,
   formatTime,
   groupQuestions,
   passRate,
   ragAdvantage,
   runStatusLabel,
   runStatusTone,
+  shufflePick,
   summarize,
+  trendPoints,
   typeLabel,
   typeTone,
 } from '@/features/eval/composables/batch';
@@ -37,10 +41,10 @@ function kase(id: string, patch: Partial<EvalCaseResult> = {}): EvalCaseResult {
 }
 
 describe('题型标签与色调', () => {
-  it('三种题型都有中文名', () => {
-    expect(typeLabel('single')).toBe('单文档');
-    expect(typeLabel('cross')).toBe('跨文档');
-    expect(typeLabel('out')).toBe('库外');
+  it('三种题型都有用户能看懂的中文名', () => {
+    expect(typeLabel('single')).toBe('单份资料可答');
+    expect(typeLabel('cross')).toBe('需综合多篇');
+    expect(typeLabel('out')).toBe('库外题（考察拒答）');
   });
 
   it('未知题型原样透出，不抛错', () => {
@@ -105,10 +109,10 @@ describe('问题集分组', () => {
     { id: 'T04', type: 'out', question: 'd', keywords: '', evidence: '' },
   ];
 
-  it('按单文档 / 跨文档 / 库外顺序分组', () => {
+  it('按单份资料 / 综合多篇 / 库外顺序分组', () => {
     const groups = groupQuestions(questions);
     expect(groups.map((g) => g.type)).toEqual(['single', 'cross', 'out']);
-    expect(groups.map((g) => g.label)).toEqual(['单文档', '跨文档', '库外']);
+    expect(groups.map((g) => g.label)).toEqual(['单份资料可答', '需综合多篇', '库外题（考察拒答）']);
   });
 
   it('同组题目按原顺序聚合', () => {
@@ -160,7 +164,7 @@ describe('结果表 CSV 行', () => {
     ]);
     expect(rows[1]).toEqual([
       'T01',
-      '单文档',
+      '单份资料可答',
       '问题 T01',
       '不查资料的回答',
       '通过',
@@ -191,6 +195,74 @@ describe('展示辅助', () => {
     expect(formatTime(null)).toBe('—');
     expect(formatTime(0)).toBe('—');
     expect(formatTime(undefined)).toBe('—');
+  });
+});
+
+describe('结果筛选与聚合（P5-02…P5-06）', () => {
+  it('filterCases：all 原样返回，failed 以查资料侧为准', () => {
+    const cases = [
+      kase('T01', { type: 'single', ragPassed: false }),
+      kase('T02', { type: 'cross', ragPassed: true }),
+      kase('T03', { type: 'out', ragPassed: false }),
+    ];
+    expect(filterCases(cases, 'all')).toHaveLength(3);
+    // rag 挂的才算 badcase；direct 挂而 rag 过的不进 failed
+    expect(filterCases(cases, 'failed').map((c) => c.questionId)).toEqual(['T01', 'T03']);
+    expect(filterCases(cases, 'cross').map((c) => c.questionId)).toEqual(['T02']);
+    expect(filterCases(cases, 'out').map((c) => c.questionId)).toEqual(['T03']);
+  });
+
+  it('filterCases：空列表各筛选键都返回空', () => {
+    expect(filterCases([], 'failed')).toEqual([]);
+    expect(filterCases([], 'single')).toEqual([]);
+  });
+
+  it('avgElapsed：取整平均，空列表返回 0', () => {
+    expect(avgElapsed([kase('T01', { elapsedMs: 100 }), kase('T02', { elapsedMs: 215 })])).toBe(158);
+    expect(avgElapsed([])).toBe(0);
+  });
+
+  it('trendPoints：升序取最近 n 个，空 stats 的批次被剔除', () => {
+    const runs = [
+      { createdAt: 300, stats: { total: 10, passedDirect: 5, passedRag: 8 } }, // 80%
+      { createdAt: 100, stats: { total: 10, passedDirect: 5, passedRag: 6 } }, // 60%
+      { createdAt: 200, stats: null }, // 无 stats，剔除
+      { createdAt: 400, stats: { total: 10, passedDirect: 5, passedRag: 10 } }, // 100%
+    ];
+    const pts = trendPoints(runs, 3);
+    expect(pts.map((p) => p.rate)).toEqual([60, 80, 100]); // 旧→新
+  });
+
+  it('trendPoints：不足 n 个全保留，单点也能给出速率', () => {
+    const pts = trendPoints([{ createdAt: 1, stats: { total: 4, passedDirect: 1, passedRag: 3 } }]);
+    expect(pts).toEqual([{ ts: 1, rate: 75 }]);
+    expect(trendPoints([])).toEqual([]);
+  });
+});
+
+describe('随机抽题（P5-07）', () => {
+  const ids = ['T01', 'T02', 'T03', 'T04', 'T05'];
+
+  it('抽 n 道返回 n 个不重复的题号，且都来自题库', () => {
+    const picked = shufflePick(ids, 3);
+    expect(picked).toHaveLength(3);
+    expect(new Set(picked).size).toBe(3);
+    picked.forEach((id) => expect(ids).toContain(id));
+  });
+
+  it('n 超过题库总数时返回全量', () => {
+    expect(shufflePick(ids, 99)).toHaveLength(5);
+  });
+
+  it('n 为 0 或负数返回空', () => {
+    expect(shufflePick(ids, 0)).toEqual([]);
+    expect(shufflePick(ids, -3)).toEqual([]);
+  });
+
+  it('同一输入多次抽取覆盖面随次数上升（防固定取样）', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) shufflePick(ids, 2).forEach((id) => seen.add(id));
+    expect(seen.size).toBe(5);
   });
 
   it('summarize 忽略 stats 参数只按 cases 算', () => {

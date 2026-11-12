@@ -1,19 +1,32 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { ChatDotRound, DataLine, Moon, Sunny, SwitchButton, TrendCharts } from '@element-plus/icons-vue';
+import {
+  ChatDotRound,
+  DataLine,
+  Moon,
+  Setting,
+  Sunny,
+  SwitchButton,
+  TrendCharts,
+} from '@element-plus/icons-vue';
 import { APP_TITLE } from '@/constants/app';
 import { authApi } from '@/api';
+import { isAdmin } from '@/app/router/role';
 import { useConversationsStore } from '@/stores/conversations';
 import { useUiPrefsStore } from '@/stores/uiPrefs';
 import StatusLight from './StatusLight.vue';
 
 /**
  * 顶栏：产品名 + 会话切换 + 状态灯 + 主题切换 + 配置入口。
+ *
+ * 管理端入口只对 ADMIN 显示：普通用户看不到这个按钮，手输 URL 也会被 adminGuard 弹回来。
  */
 const router = useRouter();
 const conversations = useConversationsStore();
 const uiPrefs = useUiPrefsStore();
+
+const admin = computed(() => isAdmin());
 
 const activeId = computed({
   get: () => conversations.activeId,
@@ -46,7 +59,7 @@ function onLogout(): void {
 <template>
   <header class="topbar" data-testid="app-topbar">
     <div class="topbar__brand">
-      <el-icon class="topbar__logo"><ChatDotRound /></el-icon>
+      <span class="topbar__logo"><el-icon><ChatDotRound /></el-icon></span>
       <span class="topbar__title">{{ APP_TITLE }}</span>
     </div>
 
@@ -102,6 +115,16 @@ function onLogout(): void {
       </el-button>
       <el-button size="small" text data-testid="nav-settings" @click="goSettings">配置</el-button>
       <el-button
+        v-if="admin"
+        size="small"
+        text
+        :icon="Setting"
+        data-testid="nav-admin"
+        @click="router.push({ name: 'admin-users' })"
+      >
+        管理端
+      </el-button>
+      <el-button
         size="small"
         text
         :icon="SwitchButton"
@@ -117,9 +140,9 @@ function onLogout(): void {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--s4);
   height: var(--header-h);
-  padding: 0 16px;
+  padding: 0 var(--s5);
   background: var(--paper);
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
@@ -128,17 +151,27 @@ function onLogout(): void {
 .topbar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
   min-width: 0;
+  flex: none;
 }
 
+/* 换肤：纯图标 → 实心品牌方块，与侧栏/卡片同圆角体系 */
 .topbar__logo {
-  color: var(--teal);
-  font-size: 18px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
+  color: var(--paper);
+  background: var(--teal);
+  border-radius: var(--radius-sm);
 }
 
 .topbar__title {
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--ink);
   white-space: nowrap;
 }

@@ -34,6 +34,7 @@ class LlmProvider(ABC):
         self,
         question: str,
         citations: list[dict[str, Any]] | None = None,
+        direct: bool = False,
     ) -> AsyncIterator[str]: ...
 
     @abstractmethod
@@ -85,6 +86,7 @@ class MockProvider(LlmProvider):
         self,
         question: str,
         citations: list[dict[str, Any]] | None = None,
+        direct: bool = False,
     ) -> AsyncIterator[str]:
         text = f"{MOCK_PREFIX}“{question}”的模拟回答。"
         if citations:
@@ -151,12 +153,13 @@ class OpenAiProvider(LlmProvider):
         self,
         question: str,
         citations: list[dict[str, Any]] | None = None,
+        direct: bool = False,
     ) -> AsyncIterator[str]:
         from ..rag.prompt import build_messages
 
         payload = {
             "model": self._model,
-            "messages": build_messages(question, citations or []),
+            "messages": build_messages(question, citations or [], direct=direct),
             "stream": True,
             "temperature": 0.2,
         }

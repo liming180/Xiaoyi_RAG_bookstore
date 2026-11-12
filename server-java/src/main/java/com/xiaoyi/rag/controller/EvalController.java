@@ -6,11 +6,15 @@ import com.xiaoyi.rag.common.support.CurrentUser;
 import com.xiaoyi.rag.model.dto.CandidateDecisionRequest;
 import com.xiaoyi.rag.model.dto.CreateExperimentRequest;
 import com.xiaoyi.rag.model.dto.EvalBatchRequest;
+import com.xiaoyi.rag.model.dto.EvalQuestionRequest;
+import com.xiaoyi.rag.model.dto.QuestionEnabledRequest;
+import com.xiaoyi.rag.model.dto.QuestionImportRequest;
 import com.xiaoyi.rag.model.vo.EvalQuestionVO;
 import com.xiaoyi.rag.model.vo.EvalRunSummaryVO;
 import com.xiaoyi.rag.service.EvalService;
 import com.xiaoyi.rag.service.ExperimentService;
 import com.xiaoyi.rag.service.FeedbackService;
+import com.xiaoyi.rag.service.QuestionBankService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
@@ -19,9 +23,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,12 +46,17 @@ public class EvalController {
     private final EvalService eval;
     private final ExperimentService experiments;
     private final FeedbackService feedback;
+    private final QuestionBankService bank;
 
     public EvalController(
-            EvalService eval, ExperimentService experiments, FeedbackService feedback) {
+            EvalService eval,
+            ExperimentService experiments,
+            FeedbackService feedback,
+            QuestionBankService bank) {
         this.eval = eval;
         this.experiments = experiments;
         this.feedback = feedback;
+        this.bank = bank;
     }
 
     /**
@@ -55,11 +66,10 @@ public class EvalController {
      * @return 题库
      */
     @GetMapping("/questions")
-    @Operation(operationId = "listEvalQuestions", summary = "题库 T01-T13")
+    @Operation(operationId = "listEvalQuestions", summary = "当前用户题库")
     public Result<List<EvalQuestionVO>> questions(
             @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
-        CurrentUser.require(userId);
-        return Result.ok(eval.questions());
+        return Result.ok(eval.questions(CurrentUser.require(userId)));
     }
 
     /**
@@ -171,6 +181,129 @@ public class EvalController {
                         .toString());
         response.getWriter().write(csv);
         response.flushBuffer();
+    }
+
+    /* ------------------------------------------------- P5-08 题库管理 */
+
+    /**
+     * 题库全量列表（含停用题），供管理界面使用。
+     *
+     * @param userId 当前用户
+     * @return 该用户全部题目
+     */
+    @GetMapping("/questions/all")
+    @Operation(operationId = "listAllEvalQuestions", summary = "题库全量（含停用）")
+    public Result<List<EvalQuestionVO>> allQuestions(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(bank.list(CurrentUser.require(userId)));
+    }
+
+    /**
+     * 新增题目。题号留空时按题型自动生成（S001 / X001 / O001）。
+     *
+     * @param userId 当前用户
+     * @param request 题面与判分关键词
+     * @return 落库后的题目
+     */
+    @PostMapping("/questions")
+    @Operation(operationId = "createEvalQuestion", summary = "新增题目")
+    public Result<EvalQuestionVO> createQuestion(
+            @RequestBody EvalQuestionRequest request,
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(bank.create(CurrentUser.require(userId), request));
+    }
+
+    /**
+     * 修改题目。题号不可改（已被历史快照引用）。
+     *
+     * @param code 题号
+     * @param userId 当前用户
+     * @param request 新题面与判分关键词
+     * @return 修改后的题目
+     */
+    @PutMapping("/questions/{code}")
+    @Operation(operationId = "updateEvalQuestion", summary = "修改题目")
+    public Result<EvalQuestionVO> updateQuestion(
+            @PathVariable String code,
+            @RequestBody EvalQuestionRequest request,
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(bank.update(CurrentUser.require(userId), code, request));
+    }
+
+    /**
+     * 停用 / 启用题目。
+     *
+     * @param code 题号
+     * @param request 目标状态
+     * @param userId 当前用户
+     * @return 修改后的题目
+     */
+    @PostMapping("/questions/{code}/enabled")
+    @Operation(operationId = "setEvalQuestionEnabled", summary = "停用 / 启用题目")
+    public Result<EvalQuestionVO> setQuestionEnabled(
+            @PathVariable String code,
+            @RequestBody QuestionEnabledRequest request,
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(
+                bank.setEnabled(
+                        CurrentUser.require(userId), code, Boolean.TRUE.equals(request.enabled())));
+    }
+
+    /**
+     * 删除题目。内置种子题不可删，只能停用。
+     *
+     * @param code 题号
+     * @param userId 当前用户
+     * @return 空信封
+     */
+    @DeleteMapping("/questions/{code}")
+    @Operation(operationId = "deleteEvalQuestion", summary = "删除题目")
+    public Result<Void> deleteQuestion(
+            @PathVariable String code,
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        bank.delete(CurrentUser.require(userId), code);
+        return Result.ok();
+    }
+
+    /**
+     * 导出题库为 CSV（列与 questions.csv 对齐，可直接再导入）。
+     *
+     * @param userId 当前用户
+     * @param response 原始响应，用于写 CSV 与下载头
+     * @throws IOException 写流失败
+     */
+    @GetMapping("/questions/export")
+    @Operation(operationId = "exportEvalQuestions", summary = "导出题库 CSV")
+    public void exportQuestions(
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId,
+            HttpServletResponse response)
+            throws IOException {
+        String csv = bank.exportCsv(CurrentUser.require(userId));
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setHeader(
+                HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment()
+                        .filename("eval-questions.csv", StandardCharsets.UTF_8)
+                        .build()
+                        .toString());
+        response.getWriter().write(csv);
+        response.flushBuffer();
+    }
+
+    /**
+     * 从 CSV 导入题目。题号冲突跳过并计数，不整批失败。
+     *
+     * @param userId 当前用户
+     * @param request CSV 正文
+     * @return 导入结果
+     */
+    @PostMapping("/questions/import")
+    @Operation(operationId = "importEvalQuestions", summary = "导入题库 CSV")
+    public Result<QuestionBankService.ImportResult> importQuestions(
+            @RequestBody QuestionImportRequest request,
+            @RequestAttribute(name = AuthInterceptor.ATTR_USER_ID, required = false) Long userId) {
+        return Result.ok(bank.importCsv(CurrentUser.require(userId), request.csv()));
     }
 
     /**

@@ -6,6 +6,7 @@ export * as authApi from './modules/auth';
 export * as chatApi from './modules/chat';
 export * as knowledgeApi from './modules/knowledge';
 export * as evalApi from './modules/eval';
+export * as adminApi from './modules/admin';
 
 export { ApiError, getToken, setToken, TOKEN_KEY, http } from './http';
 export { on, emit, clearAllListeners } from './events';

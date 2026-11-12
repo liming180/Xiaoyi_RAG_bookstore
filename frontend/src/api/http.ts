@@ -38,6 +38,24 @@ export function setToken(token: string | null): void {
 
 const BASE_URL = import.meta.env.VITE_API_BASE ?? '/api/v1';
 
+/**
+ * 角色清理。
+ *
+ * 这里不从 '@/app/router/role' 导入：http.ts 是 api 层的底座，被 router 依赖，
+ * 反向 import 会形成循环（router → api → router）。角色键名与 role.ts 保持同一个字面量，
+ * 由 role.ts 里的单测钉住一致性。
+ */
+const ROLE_KEY = 'xiaoyi.role';
+
+function setRoleRaw(role: string | null): void {
+  try {
+    if (role) window.localStorage.setItem(ROLE_KEY, role);
+    else window.localStorage.removeItem(ROLE_KEY);
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
 export const http: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 30000,
@@ -81,6 +99,9 @@ http.interceptors.response.use(
 
       if (status === 401) {
         setToken(null);
+        // 角色与 token 同生命周期：不清的话，下一个登录的普通用户会继承上一个
+        // 管理员留下的管理端入口（虽然服务端仍会 403，但界面上不该出现）。
+        setRoleRaw(null);
         emit('auth:expired', undefined);
       }
       if (status === 503) {

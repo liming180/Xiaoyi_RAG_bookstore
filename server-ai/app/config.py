@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     milvus_uri: str = ""
     milvus_collection: str = "xiaoyi_chunks"
 
+    # Milvus 凭据。开启 authorizationEnabled 后必须给，否则连接被拒（code=2）。
+    # 默认留空 = 不带凭据连接（兼容未开鉴权的本地环境与 CI）。
+    # 注意：镜像出厂默认密码是 "Milvus" 而不是空串，详见 tools/setup_milvus_auth.py。
+    milvus_user: str = ""
+    milvus_password: str = ""
+
     # 每个入库阶段之间的停顿（毫秒）。默认 0 = 全速推进；调大后 Java 侧轮询才看得到
     # parsing → splitting → embedding → summarizing → done 的完整阶段序列。
     ingest_stage_delay_ms: int = 0

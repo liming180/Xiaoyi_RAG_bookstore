@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import type { Citation, FeedbackRating, Message } from '@/types/api';
 import AnswerBody from './AnswerBody.vue';
 import FeedbackBar from './FeedbackBar.vue';
+import { formatClock } from '@/utils/time';
 
 /**
  * MessageBubble —— 单条消息气泡（F04/F05/F11）。
@@ -35,14 +36,13 @@ const elapsedText = computed(() => {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 });
 
-const timeText = computed(() => {
-  const ts = props.message.createdAt;
-  if (!ts) return '';
-  const d = new Date(ts);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-});
+/**
+ * 气泡时间（A-1 修复）。
+ *
+ * 原实现直接 new Date(ts)，后端给 Unix 秒时会渲染成 1970 年的时间；
+ * 统一走 utils/time 的 formatClock（内部已做秒/毫秒归一化）。
+ */
+const timeText = computed(() => formatClock(props.message.createdAt));
 
 const suggestions = computed(() => (props.message.suggestions ?? []).slice(0, 3));
 

@@ -132,7 +132,9 @@ async def eval_batch(
     results = []
     for case in req.cases:
         started = time.perf_counter()
-        direct_answer = await _collect(provider, case.question, [])
+        # direct 侧必须显式标记：direct=True 才走 DIRECT_SYSTEM_PROMPT，
+        # 否则「不查资料」那一侧会被「只能用片段作答」卡死，恒答「资料中没有提到」。
+        direct_answer = await _collect(provider, case.question, [], direct=True)
         citations = ingest.context_citations(user_id, case.question, req.k)
         rag_answer = await _collect(provider, case.question, citations)
         results.append(
@@ -156,10 +158,10 @@ async def eval_batch(
     )
 
 
-async def _collect(provider, question: str, citations: list[dict]) -> str:
+async def _collect(provider, question: str, citations: list[dict], direct: bool = False) -> str:
     """把流式增量拼成整段回答，评测需要完整文本才能判分。"""
     chunks: list[str] = []
-    async for token in provider.answer(question, citations):
+    async for token in provider.answer(question, citations, direct=direct):
         chunks.append(token)
     return "".join(chunks)
 
@@ -169,16 +171,27 @@ def _judge(answer: str, keywords: str) -> bool:
 
     与 Java 侧 `EvalServiceImpl.judge` 的分组语义保持一致，避免两侧对同一答案
     给出不同结论。
+
+    判分前**抹掉两侧所有空白字符**再比对。原因：真实 provider（glm-4-flash）在中文
+    与数字之间加空格是常态输出 ——「最多借 4 本」「借期 21 天」，而题库关键词写的是
+    `4本` / `21天`。不做归一化时，答案明明完全正确却判成未命中，passedRag 被系统性
+    压低（实测 T03 就踩在这条上）。关键词里本来就不含空格，抹空白不影响分组语义。
     """
     if not keywords:
         return False
+    normalized = _squash(answer)
     for group in keywords.split("|"):
-        alternatives = [word.strip() for word in group.split("/") if word.strip()]
+        alternatives = [_squash(word) for word in group.split("/") if word.strip()]
         if not alternatives:
             continue
-        if not any(word in answer for word in alternatives):
+        if not any(word in normalized for word in alternatives):
             return False
     return True
+
+
+def _squash(text: str) -> str:
+    """去掉所有空白字符（空格、全角空格、换行、制表符）。"""
+    return "".join(text.split())
 
 
 

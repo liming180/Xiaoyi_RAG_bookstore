@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import type { AnswerMode, Citation, Message } from '@/types/api';
 import { SEED_EXAMPLES } from '@/mocks/data';
-import { chatApi } from '@/api';
+import { chatApi, evalApi } from '@/api';
 import { useConversationsStore } from '@/stores/conversations';
 import { useSystemStatusStore } from '@/stores/systemStatus';
 import { useQueryPrefs } from '@/composables/useQueryPrefs';
@@ -50,6 +50,8 @@ const chat = useChat({
 });
 
 const clearing = ref(false);
+/** 正在把对照结果送进候选池 */
+const capturing = ref(false);
 
 /** 最近一条带 trace 的助手消息 → 检索过程面板 */
 const traceForLast = computed(() => {
@@ -167,6 +169,22 @@ function onOpenInKnowledge(citation: Citation): void {
   });
 }
 
+/**
+ * 对照模式里的引用角标（换肤）。
+ *
+ * 原行为：@cite 直接接到 onOpenInKnowledge，点角标就跳去知识库片段页 ——
+ * 对照模式本来是用来「并排看两栏差别」的，一点角标就把人送出页面，很割裂。
+ * 现在改为打开引用抽屉（与消息列表里的角标行为一致），抽屉里再给
+ * 「在知识库中查看」作为显式出口。
+ *
+ * messageListRef 是 MessageList 暴露的 defineExpose，含 onCite / activeCitation。
+ */
+const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
+
+function onCompareCite(citation: Citation): void {
+  messageListRef.value?.onCite(citation);
+}
+
 /** C1：反馈已由 FeedbackBar 写回消息对象，这里只做「未核实」提示的联动 */
 function onFeedback(messageId: string, rating: 'up' | 'down' | null): void {
   const target = messages.value.find((m) => m.id === messageId);
@@ -175,6 +193,36 @@ function onFeedback(messageId: string, rating: 'up' | 'down' | null): void {
 
 /** 流式期间把临时消息塞给列表 */
 const streaming = computed<Message | null>(() => chat.streamingMessage.value);
+
+/**
+ * 对照时发现差异 → 把这一问送进评测候选池。
+ *
+ * <p>这是 both 模式与评测体系的接缝：对照的目的是发现 badcase，发现之后必须能
+ * 一键留痕，否则用户看完两栏只能截图记笔记。落进候选池后到「评测 → 候选题池」
+ * 补判分关键词，就能进实验计分。
+ *
+ * <p>候选池的写入需要一条 messageId（候选是由 👎 反馈产生的）。这里没有走反馈
+ * 通道，而是把 rag 侧的消息 id 借给后端 —— 若当前那轮还没落库（例如流式中），
+ * 直接提示用户稍后再点。
+ */
+async function onCaptureCompare(): Promise<void> {
+  const rag = compareRag.value;
+  if (!rag?.id) {
+    ElMessage.warning('这轮回答还没落库，等生成完成后才能建用例');
+    return;
+  }
+  if (capturing.value) return;
+  capturing.value = true;
+  try {
+    await evalApi.submitFeedback(rag.id, { rating: 'down', comment: '对照后发现差异，建为评测用例' });
+    onFeedback(rag.id, 'down');
+    ElMessage.success('已送进评测候选池，到「评测 → 候选题池」补判分关键词即可计分');
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加入候选池失败，请重试');
+  } finally {
+    capturing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -186,9 +234,11 @@ const streaming = computed<Message | null>(() => chat.streamingMessage.value);
 
     <template v-else>
       <MessageList
+        ref="messageListRef"
         :messages="messages"
         :streaming="streaming"
         :pending-label="chat.pending.value"
+        :hide-assistant-in-compare="mode === 'both'"
         @retry="retry"
         @suggest="send"
         @open-in-knowledge="onOpenInKnowledge"
@@ -202,7 +252,10 @@ const streaming = computed<Message | null>(() => chat.streamingMessage.value);
         :rag-draft="chat.draft.value"
         :direct-draft="chat.state.value.directDraft"
         :rag-pending="chat.isStreaming.value"
-        @cite="onOpenInKnowledge"
+        :direct-pending="chat.isStreaming.value && chat.state.value.directDraft === ''"
+        :live="chat.isStreaming.value"
+        @cite="onCompareCite"
+        @capture="onCaptureCompare"
       />
 
       <RetrievalTrace v-if="traceForLast" :trace="traceForLast" />

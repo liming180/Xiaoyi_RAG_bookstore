@@ -11,13 +11,12 @@ import java.util.Map;
 public interface EvalService {
 
     /**
-     * 题库 T01-T13，来自打包进 classpath 的静态 CSV。
+     * 当前用户启用中的题库（P5-08 起题库是用户数据，来自 {@code eval_question} 表）。
      *
-     * <p>刻意不带 userId：题库是只读资源，所有用户看到的是同一份。
-     *
-     * @return 题库
+     * @param userId 归属用户
+     * @return 可参与选题的题目
      */
-    List<EvalQuestionVO> questions();
+    List<EvalQuestionVO> questions(Long userId);
 
     /**
      * 跑一轮对照评测；供实验链路在后台线程里复用。

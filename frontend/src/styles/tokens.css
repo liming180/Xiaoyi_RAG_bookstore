@@ -1,42 +1,96 @@
-/* 设计令牌（U04）：浅色主题。暗色主题在 P6 通过 [data-theme='dark'] 覆盖。 */
+/* 设计令牌：浅色主题。暗色主题通过 [data-theme='dark'] 覆盖。
+ *
+ * 2026-11-09 换肤：变量名全部保持不变（全项目 20+ 个变量、6 个组件依赖它），
+ * 只调整取值。新增的是增量变量（--surface-2 / --hover / --faint / --line-strong /
+ * --teal-line / --shadow-* 四档 / 间距刻度 --s1..--s10），旧变量一个都没删。
+ *
+ * 换肤原则：靠边框分层而不是阴影。原方案用单一 24px 大扩散阴影给所有卡片，
+ * 密集页面（评测/题库）会糊成一片；现在阴影拆成四档且默认只用最轻的一档，
+ * 层级交给 --line 与背景差。
+ */
 :root {
-  --bg: #f8f9f7;
+  /* ---- 原有变量：名字不变，取值按换肤方案调整 ---- */
+  --bg: #f6f8f7;
   --paper: #ffffff;
-  --sidebar: #f1f4f0;
-  --ink: #253e38;
-  --text: #354740;
-  --muted: #708079;
-  --line: #e2e8e2;
-  --teal: #276352;
-  --teal-dark: #1c4d3e;
-  --soft: #eaf2ec;
-  --amber: #996429;
-  --amber-soft: #faf1df;
-  --red: #ad5650;
-  --red-soft: #fbefec;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow: 0 1px 2px rgba(37, 62, 56, 0.06), 0 8px 24px rgba(37, 62, 56, 0.06);
+  --sidebar: #f3f5f3;
+  --ink: #17261f;
+  --text: #37463f;
+  --muted: #6b7c74;
+  --line: #e5e9e5;
+  --teal: #2a6a57;
+  --teal-dark: #1a4a3c;
+  --soft: #e7f0ec;
+  --amber: #95652c;
+  --amber-soft: #faf2e2;
+  --red: #a8534d;
+  --red-soft: #fbeeec;
+  --radius: 14px;
+  --radius-sm: 8px;
+
+  /* 阴影：四档，默认最轻。--shadow 保留旧名，映射到 sm，避免旧组件突然变重 */
+  --shadow-xs: 0 1px 2px rgba(23, 38, 31, 0.04);
+  --shadow-sm: 0 1px 3px rgba(23, 38, 31, 0.06), 0 1px 2px rgba(23, 38, 31, 0.04);
+  --shadow-md: 0 4px 12px rgba(23, 38, 31, 0.07), 0 1px 3px rgba(23, 38, 31, 0.05);
+  --shadow-lg: 0 12px 32px rgba(23, 38, 31, 0.1), 0 2px 8px rgba(23, 38, 31, 0.05);
+  --shadow: var(--shadow-sm);
+
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
     monospace;
-  --header-h: 56px;
-  --sidebar-w: 260px;
+  --header-h: 52px;
+  --sidebar-w: 272px;
+
+  /* ---- 新增变量（换肤增量） ---- */
+  --surface-2: #fafbfa;
+  --hover: #eef2ef;
+  --faint: #98a6a0;
+  --line-strong: #d3d9d3;
+  --teal-hover: #225a49;
+  --teal-line: #c9ded6;
+  --amber-line: #eddfc4;
+  --red-line: #f0d5d1;
+
+  /* 间距刻度：4px 基数。旧代码里的 14/18/22 等魔法数字保留不动，
+     新写的样式一律走刻度，两套共存不冲突。 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 [data-theme='dark'] {
-  --bg: #151a18;
-  --paper: #1c2320;
-  --sidebar: #18201d;
-  --ink: #e6efe9;
-  --text: #cfdbd4;
-  --muted: #93a29b;
-  --line: #2a3531;
-  --teal: #4e9d84;
-  --teal-dark: #3b8069;
-  --soft: #20302a;
-  --amber: #d5a35c;
-  --amber-soft: #33291a;
-  --red: #d0827c;
-  --red-soft: #33211f;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.32);
+  --bg: #0f1512;
+  --paper: #161e1a;
+  --sidebar: #131a16;
+  --ink: #e8f0eb;
+  --text: #c2d0c9;
+  --muted: #8b9c94;
+  --line: #26302b;
+  --teal: #4fa78a;
+  --teal-dark: #7cc9ae;
+  --soft: #1c2c26;
+  --amber: #d9ab63;
+  --amber-soft: #2a2318;
+  --red: #d4857e;
+  --red-soft: #2b1d1b;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow: var(--shadow-sm);
+
+  --surface-2: #1a231e;
+  --hover: #1e2823;
+  --faint: #6b7d75;
+  --line-strong: #35423b;
+  --teal-hover: #5cb99a;
+  --teal-line: #2b4438;
+  --amber-line: #42371f;
+  --red-line: #452b28;
 }
