@@ -51,9 +51,22 @@ class LexicalReranker:
     reason = "未配置 RERANK_ENDPOINT，保持融合顺序（本地词项分仅作并列消歧）"
 
     def rerank(self, question: str, rows: Sequence[dict[str, Any]], k: int) -> list[dict[str, Any]]:
+        """**严格保序**：只给每行补计算字段，不改变顺序。
+
+        历史坑（已修）：早先的排序键是
+        ``(-score, -lexical_score, chunk_id)``。score 不同时确实不动，
+        但 RRF 融合经常产出**同分**候选（两路名次相加相等很常见），
+        此时 lexical_score 就变成实际排序键，把 RRF 用 chunk_id 定的确定性顺序
+        推翻了 —— 实测构造 `score` 相等的两行，输出顺序与输入相反。
+        这与本类注释宣称的「保序、不比不降级更差」直接矛盾，
+        也让 hybrid 档位的指标失真。
+
+        现在改为：顺序原样返回，lexical_score 只作为解释字段随行带出，
+        供前端/轨迹展示"为什么这行值得看"，不参与排序。
+        """
         if not rows:
             return []
-        ranked = [
+        annotated = [
             {
                 **row,
                 "rrf_score": float(row.get("score", 0.0)),
@@ -64,8 +77,8 @@ class LexicalReranker:
             }
             for row in rows
         ]
-        ranked.sort(key=lambda row: (-row["score"], -row["lexical_score"], row["chunk_id"]))
-        return ranked[: max(0, k)]
+        # 不做 sort：ranked 的顺序就是入参 rows 的顺序（RRF 已排好）。
+        return annotated[: max(0, k)]
 
 
 class HttpReranker:

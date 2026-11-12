@@ -19,7 +19,7 @@ from ..config import get_settings
 from ..core.rag import pipeline, prompt, summarizer
 from ..core.rag.embedder import Embedder, embedder_from_settings
 from ..core.rag.fusion import reciprocal_rank_fusion
-from ..core.rag.reranker import QueryRewriter, Reranker, reranker_from_settings
+from ..core.rag.reranker import LexicalReranker, QueryRewriter, Reranker, reranker_from_settings
 from ..core.rag.retriever import bm25_cache
 from ..core.rag.splitter import MAX_CHUNKS_PER_DOC, MAX_DOCS_PER_USER, build_pieces
 from ..core.vector_store.store import VectorStore, store_from_settings
@@ -538,7 +538,14 @@ def retrieve(
     # 服务只返回 top-k；未入选的候选接在后面，构成 F08 的淘汰区。
     ranked_ids = {row["chunk_id"] for row in ranked}
     candidates = ranked + [row for row in fused if row["chunk_id"] not in ranked_ids]
-    result = pipeline.recall(runtime.store(), request, stage="rerank", candidates=candidates)
+    # score_stage 必须反映**真实发生的事**：没配 RERANK_ENDPOINT 时走的是
+    # LexicalReranker（保序 + 补计算字段），顺序就是 RRF 顺序，此时标 rerank
+    # 会让前端和评测报告误以为做了模型精排（实测 hybrid 与 rrf 指标完全相同，
+    # 根因之一就是这里标错，掩盖了"没真重排"这个事实）。
+    rerank_applied = not reranker.degraded and not isinstance(reranker, LexicalReranker)
+    actual_stage = "rerank" if rerank_applied else "rrf"
+    diagnostics["rerankApplied"] = rerank_applied
+    result = pipeline.recall(runtime.store(), request, stage=actual_stage, candidates=candidates)
     result.diagnostics = diagnostics
     _with_summary_card(result, user_id, task_id, vector, req, rewritten)
     return result
