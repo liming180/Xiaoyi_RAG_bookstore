@@ -99,7 +99,7 @@ result = pipeline.recall(runtime.store(), request, stage=actual_stage, candidate
 
 `chunk_size=180` / `overlap=30` 是从 v1 继承的默认值。文档中的出处：
 
-> `docs/02-重构设计/04_后端开发提示词.md:150`：`chunk_size=180` / `chunk_overlap=30`（v1 的 index.json 记录）
+> `docs/02-重构设计/00_项目架构规格.md:150`：`chunk_size=180` / `chunk_overlap=30`（v1 的 index.json 记录）
 
 **没有任何调参实验记录**。同时实测切片长度分布为 min=113 / max=266 / mean=221——因为 `_trim_to_boundary` 允许回退 40%，实际长度会显著超出 180。
 

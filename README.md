@@ -132,7 +132,7 @@ Xiaoyi_RAG_bookstore/
 │   └── ai-api/                FastAPI 算法层
 ├── infra/
 │   ├── docker/                compose + 各服务镜像定义
-│   ├── milvus/                向量库配置
+│   ├── milvus/                独立 Milvus 配置（可选，默认不用）
 │   └── nginx/                 静态托管 + API 反代
 ├── scripts/                   开发脚本 + 一键启动
 ├── tests/                     集成测试 + 检索评测
@@ -172,7 +172,18 @@ deploy\start-frontend.bat
 
 详细步骤与排错见 [docs/00-本地启动手册.md](docs/00-本地启动手册.md)。
 
-> 向量库默认用 **milvus-lite**（纯 Python 内嵌，无需 Docker）。想用独立 Milvus 服务，改 `scripts/make_launchers.py` 里的 `XIAOYI_MILVUS_URI` 为 `MILVUS_URI=http://127.0.0.1:19530` 即可。
+### 向量库：三种后端可切换
+
+向量库做了抽象（`VectorStore` 接口），支持三种实现，靠配置切换：
+
+| 后端 | 适用场景 | 依赖 | 数据存放 |
+|---|---|---|---|
+| **milvus-lite**（默认） | 单机开发、中小语料 | `pip install milvus-lite` | 单个文件 `test-artifacts/milvus-lite/xiaoyi.db` |
+| Milvus 独立服务 | 多实例、大语料、高可用 | 4 个 Docker 容器（约 4.9 GB） | etcd + MinIO |
+| 内存实现 | 单元测试、离线门禁 | 无 | 进程内存（重启即失） |
+
+默认走 milvus-lite，因为零额外依赖、开箱即用。切到独立 Milvus 的步骤见
+[infra/milvus/README.md](infra/milvus/README.md)。
 
 ---
 

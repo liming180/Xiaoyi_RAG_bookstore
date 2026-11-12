@@ -76,7 +76,7 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 
 **`40001` 的特例文案**：登录时 `username` 为空，message 必须是 `用户名不能为空`（不是 `参数不合法`）。其余场景用 `参数不合法`，具体字段名由后端日志承载，不进 `message`。
 
-**编号分配与手册 §J4 的差异**：`04_后端开发提示词.md` 的 J4 段落曾把 `40001`/`40002` 分配给 chunkSize/overlap 校验，与前端 mock 的编号相反。**以本表为准**：`40002` = chunkSize 越界、`40003` = overlap 越界。理由：前端 `frontend/src/mocks/handlers.ts:336-337` 与 `frontend/test/` 已按此编号断言，改编号会打破既有测试。
+**编号分配的历史差异**：早期开发阶段的 J4 任务说明曾把 `40001`/`40002` 分配给 chunkSize/overlap 校验，与前端 mock 的编号相反。**以本表为准**：`40002` = chunkSize 越界、`40003` = overlap 越界。理由：前端 `apps/web/src/mocks/handlers.ts:336-337` 与 `apps/web/test/` 已按此编号断言，改编号会打破既有测试。
 
 ---
 
@@ -88,9 +88,9 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 | `40101` | `无权访问该资源` | 403 | 已认证但资源不属于当前用户（会话/消息越权） | 会话与消息类端点 |
 | `40102` | `内部令牌无效` | 401 | `X-Internal-Token` 缺失或与 `INTERNAL_TOKEN` 不匹配 | 内部 8 条端点 |
 
-`40100` 是前端唯一会触发**自动登出**的码：`frontend/src/api/http.ts` 收到 401 后清 `localStorage['xiaoyi.token']` 并广播 `auth:expired`。
+`40100` 是前端唯一会触发**自动登出**的码：`apps/web/src/api/http.ts` 收到 401 后清 `localStorage['xiaoyi.token']` 并广播 `auth:expired`。
 
-`40102` 只在 `server-ai/` 侧产生，Java 收到后应记 WARN 并转 `50301` 对外，**不得把 `内部令牌无效` 透给前端**。
+`40102` 只在 `backend/ai-api/` 侧产生，Java 收到后应记 WARN 并转 `50301` 对外，**不得把 `内部令牌无效` 透给前端**。
 
 ---
 
@@ -106,7 +106,7 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 | `40406` | `会话不存在` | 404 | `conversations/{id}` 查无此会话 | `DELETE /conversations/{id}`、`GET /conversations/{id}/messages`、`DELETE /conversations/{id}/messages` |
 | `40407` | `消息不存在` | 404 | `messages/{id}` 查无此消息 | `GET /messages/{id}/trace`、`POST /messages/{id}/feedback` |
 
-**`GET /messages/{id}/trace` 的宽松约定**：消息存在但尚无检索轨迹（纯 `direct` 模式产出）时，**不报 `40407`**，回 `{code: 0, data: null}`。只有消息本身不存在才报 `40407`。前端 `frontend/src/api/modules/chat.ts:62` 的返回类型是 `Promise<RetrievalTrace | null>`，依赖此约定。
+**`GET /messages/{id}/trace` 的宽松约定**：消息存在但尚无检索轨迹（纯 `direct` 模式产出）时，**不报 `40407`**，回 `{code: 0, data: null}`。只有消息本身不存在才报 `40407`。前端 `apps/web/src/api/modules/chat.ts:62` 的返回类型是 `Promise<RetrievalTrace | null>`，依赖此约定。
 
 ---
 
@@ -143,7 +143,7 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 |---|---|---|---|
 | `50101` | `尚未实现` | 200 或 501 | J1 阶段 28 条路由已挂载但业务未写，Controller 方法抛 `ApiException(50101, "尚未实现")` |
 
-存在的意义：让 `test/J1-skeleton/test_envelope_all_routes.py` 能在业务为空时验证「28 条路由全部返回合法信封」。J2 之后本码应逐步消失；J6 联调完成时对外 28 条中不应再有 `50101`。
+存在的意义：让 `tests/J1-skeleton/test_envelope_all_routes.py` 能在业务为空时验证「28 条路由全部返回合法信封」。J2 之后本码应逐步消失；J6 联调完成时对外 28 条中不应再有 `50101`。
 
 ---
 
@@ -151,9 +151,9 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 
 | code | message | HTTP | 触发条件 |
 |---|---|---|---|
-| `50301` | `AI 服务不可用` | 503 | `server-ai/` 不可达、`/internal/v1/health` 连续失败、熔断打开 |
+| `50301` | `AI 服务不可用` | 503 | `backend/ai-api/` 不可达、`/internal/v1/health` 连续失败、熔断打开 |
 
-前端 `frontend/src/api/http.ts` 收到 503 后广播 `system:degraded`，页面顶部出降级横幅。
+前端 `apps/web/src/api/http.ts` 收到 503 后广播 `system:degraded`，页面顶部出降级横幅。
 
 **与 `50001` 的区别**：`50001` 是「AI 服务活着但这次生成失败」（可重试）；`50301` 是「AI 服务整体不可用」（重试无意义，应等熔断恢复）。
 
@@ -269,11 +269,11 @@ data: {"code":50001,"message":"模型生成超时","fallback":"direct"}
 
 | 收到 | 前端动作 | 代码位置 |
 |---|---|---|
-| `code === 0` | 返回 `data` | `frontend/src/api/http.ts` 响应拦截器 |
+| `code === 0` | 返回 `data` | `apps/web/src/api/http.ts` 响应拦截器 |
 | `code !== 0` | 抛 `ApiError(code, message, status, data)` | 同上 |
 | HTTP 401 | 清 `localStorage['xiaoyi.token']` + `emit('auth:expired')` | 同上 |
 | HTTP 503 | `emit('system:degraded')` | 同上 |
-| `40901` | 问答输入框置禁用态 + 提示 | `frontend/src/features/chat/` |
+| `40901` | 问答输入框置禁用态 + 提示 | `apps/web/src/features/chat/` |
 | `50101` | 提示「功能未开放」 | 全局 |
 
 `ApiError` 的 `message` 直接取自信封的 `message`，前端不再二次翻译 —— 所以本表的文案就是用户看到的文案，改动需同步前后端。
