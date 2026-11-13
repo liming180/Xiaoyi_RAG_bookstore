@@ -141,7 +141,7 @@ def slim_env(env: dict[str, str]) -> dict[str, str]:
         try:
             value.encode("ascii")
         except UnicodeEncodeError:
-            print(f"[make_launchers] 跳过非 ASCII 值: {key}", file=sys.stderr)
+            print(f"[make_launchers] skip non-ASCII value: {key}", file=sys.stderr)
             continue
         out[key] = value
     return out
@@ -186,7 +186,7 @@ def write_cmd(path: Path, env: dict[str, str], workdir: Path, command: str, logf
     except UnicodeEncodeError as exc:
         raise SystemExit(f"[make_launchers] 生成失败：{path.name} 含非 ASCII 字符 -> {exc}")
     path.write_text(content, encoding="ascii", newline="")
-    print(f"[make_launchers] 生成 {path}（ASCII，{len(lines)} 行）")
+    print(f"[make_launchers] wrote {path} (ASCII, {len(lines)} lines)")
 
 
 def write_vbs(path: Path, cmd_path: Path, workdir: Path) -> None:
@@ -214,12 +214,22 @@ def write_vbs(path: Path, cmd_path: Path, workdir: Path) -> None:
     except UnicodeEncodeError as exc:
         raise SystemExit(f"[make_launchers] 生成失败：{path.name} 含非 ASCII 字符 -> {exc}")
     path.write_text(content, encoding="ascii", newline="")
-    print(f"[make_launchers] 生成 {path}（隐藏窗口启动器）")
+    print(f"[make_launchers] wrote {path} (hidden launcher)")
 
 
 def main() -> int:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     (ROOT / "test-artifacts").mkdir(parents=True, exist_ok=True)
+
+    # milvus-lite 不会自己创建父目录：传 `...\milvus-lite\xiaoyi.db` 时，
+    # 如果 milvus-lite 这层不存在，pymilvus 会抛
+    # `ConnectionConfigException: Open local milvus failed, dir: ... not exists`。
+    # 而且这个错误发生在建库/检索时，启动脚本察觉不到，表现为「全部就绪但索引建不出来」。
+    # 所以这里主动建好，换机器部署时不需手工 mkdir。
+    milvus_uri = (ROOT / "test-artifacts" / "milvus-lite" / "xiaoyi.db")
+    if not milvus_uri.parent.exists():
+        milvus_uri.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[make_launchers] created vector dir {milvus_uri.parent}")
 
     cfg = p7_env.load()
 
@@ -280,7 +290,7 @@ def main() -> int:
         "profiles": profiles,
     }
     (RUN_DIR / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[make_launchers] 完成 -> {RUN_DIR}")
+    print(f"[make_launchers] done -> {RUN_DIR}")
     return 0
 
 

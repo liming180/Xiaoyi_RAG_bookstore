@@ -15,6 +15,7 @@ import base64
 import json
 import os
 import secrets
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,12 +41,30 @@ DEFAULTS = {
 
 
 def load() -> dict[str, str]:
+    """读 p7-env.json，缺失时**显式告警**而不是静默回落默认值。
+
+    为什么必须告警：早期版本文件缺失时直接返回 DEFAULTS，脚本照常跑通、
+    界面照常显示「全部就绪」，但内部令牌 / 数据库名 / 目录全是默认值，
+    服务实际处于半坏状态（踩过：AI 回落 mock 档、索引重建静默失败）。
+    现在缺文件会打一条醒目 WARNING，提醒先跑一次 start-backend 生成环境。
+    """
     data: dict[str, str] = {}
     if OUT.exists():
         try:
             data = json.loads(OUT.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             data = {}
+            print(f"[p7_env] WARNING: {OUT} is not valid JSON, treating as empty", file=sys.stderr)
+    else:
+        # 用英文：这个模块会被 .bat 调起，而 cmd.exe 默认代码页是 GBK，
+        # 中文在这里极易变成乱码，导致真正需要看的人读不懂。
+        print(
+            f"[p7_env] WARNING: missing {OUT}\n"
+            "         Falling back to built-in defaults; token/database/storage paths\n"
+            "         may differ from what you expect.\n"
+            "         Fix: run deploy\\start-backend.bat once to generate it.",
+            file=sys.stderr,
+        )
     merged = {**DEFAULTS, **{k: v for k, v in data.items() if v}}
     # 进程内环境变量优先（例如 local_mysql_up.py 会先把 MYSQL_DATABASE
     # 写进 os.environ 再调用这里，避免被 p7-env.json 里的旧值覆盖）。
